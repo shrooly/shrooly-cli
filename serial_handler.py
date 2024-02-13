@@ -5,6 +5,7 @@ from colorlog import ColoredFormatter
 import logging
 import queue
 import re
+from constants import (HIGH, LOW, MINIMAL_EN_LOW_DELAY)
 
 class write_buffer_element:
     payload = ""
@@ -25,6 +26,7 @@ class serial_handler:
     serial_response = ""
     exit_signal = False
     prompt_received = False
+    boot_finished = False
     
     def __init__(self, logger):
         self.logger = logger
@@ -34,13 +36,29 @@ class serial_handler:
         self.logger.setLevel(logger.getEffectiveLevel())
         #self.logger.setLevel("DEBUG")
     
-    def connect(self, port='/dev/ttyACM0', baud=921600):
+    def connect(self, port='/dev/ttyACM0', baud=921600, reset=True):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
         try:
-            self.ser = serial.Serial(port, baud, timeout=1)
+            self.ser = serial.serial_for_url(port, baud, timeout=1, do_not_open=True)
+            self.ser.setRTS(LOW)
+            self.ser.setDTR(LOW)
+            
+            self.ser.open()
+            self.logger.info("Successfully opened serial!")
+
+            self.ser.setRTS(HIGH)
+            self.ser.setDTR(HIGH)
         except Exception as e:
+            print(str(e))
             self.logger.critical("Couldn't connect to serial at " + port + ", baud: " + str(baud))
             exit()
+
+        if(reset==True):
+            self.logger.info("Sending hard reset to device..")
+            
+            self.ser.setRTS(LOW)  # EN=LOW, chip in reset
+            time.sleep(MINIMAL_EN_LOW_DELAY)
+            self.ser.setRTS(HIGH)  # EN=HIGH, chip out of reset
         
         self.read_thread = threading.Thread(target=self.handle_read_serial_port)
         self.read_thread.start()
@@ -50,7 +68,7 @@ class serial_handler:
         self.logger.debug("[SERIAL_HANDLER] Serial connection successful!")
 
     def disconnect(self):
-        self.logger.info("[SERIAL_HANDLER] Serial disconnect has been called")
+        self.logger.info("Serial disconnect has been called")
         self.exit_signal = True
     
     def getQueueSize(self):
@@ -60,49 +78,34 @@ class serial_handler:
         return self.active_element
     
     def handle_read_serial_port(self):
-        try:
-            if not self.ser.is_open:
-                self.logger.info("[SERIAL_HANDLER] Serial port is not open, opening it..")
-                self.ser.open()
+        if not self.ser.is_open: # exit if serial port is not open
+            self.logger.critical("Serial port is not open while attempting to read, exiting..")
+            exit()
 
-            while True:
-                if self.exit_signal:
-                    self.logger.debug("[SERIAL_HANDLER] Exiting serial read thread")
-                    break
-                
-                try:
-                    serial_cache = self.ser.read_all()
-                    serial_cache = serial_cache.decode("utf-8", "ignore")
+        while True: # infinite loop for handling reads
+            if self.exit_signal: # if the external exit_signal is raised, kill the loop
+                self.logger.debug("[SERIAL_HANDLER] Exiting serial read loop")
+                break
+            
+            try: # try to read, continue the while loop if error
+                serial_cache = self.ser.read_all()
+            except Exception as e:
+                self.logger.error("[SERIAL_HANDLER] Serial error: " + str(e))
+                continue
 
-                    for serial_character in serial_cache:
-                        #self.logger.debug("[SERIAL_HANDLER] SERIAL CHAR RECEIVED: " + serial_character)
-                        
-                        if serial_character == '\r':
-                            pass
-                        elif serial_character == '\n':
-                            #self.logger.debug("[SERIAL_HANDLER]  End char received, processing: " + self.serial_line)
-                            self.serial_line = self.serial_line + '\n'
-                            self.process_serial_line(self.serial_line)
-                            self.serial_line = ""
-                        else:
-                            self.serial_line = self.serial_line + str(serial_character)
-                        
-                        prompt_pattern = "[a-zA-Z0-9]+:~\$.+"
-                        prompt_match = re.search(prompt_pattern, self.serial_line)
+            serial_cache = serial_cache.decode("utf-8", "ignore")
 
-                        if prompt_match:
-                            self.logger.debug("[SERIAL_HANDLER] Prompt found in serial cache, sending it to processor")
-                            self.process_serial_line(self.serial_line, True)
-                            if self.prompt_received == False: 
-                                self.prompt_received = True
-                            self.serial_line = ""
-
-                except serial.SerialException as e:
-                    self.logger.error("[SERIAL_HANDLER] Serial error: " + str(e))
-                    #exit()
-
-        except serial.SerialException as e:
-            self.logger.error("[SERIAL_HANDLER] Serial port error: {e}")
+            for serial_character in serial_cache:
+                #self.logger.debug("[SERIAL_HANDLER] SERIAL CHAR RECEIVED: " + serial_character)
+                if serial_character == '\r': # we want to filter out carriage return chars
+                    pass
+                elif serial_character == '\n': # end of line received
+                    #self.logger.debug("[SERIAL_HANDLER]  End char received, processing: " + self.serial_line)
+                    self.serial_line = self.serial_line + '\n'
+                    self.process_serial_line(self.serial_line)
+                    self.serial_line = ""
+                else:
+                    self.serial_line = self.serial_line + str(serial_character)
 
     def add_to_write_queue(self, payload, callback=None, metadata=""):
         element_to_put = write_buffer_element(payload, callback, metadata)
@@ -127,8 +130,9 @@ class serial_handler:
                     if (len(payload_string_cleaned) > 20):
                         payload_string_cleaned = payload_string_cleaned[0:20] + "..."
                     payload_string_cleaned_capped = "\"" + payload_string_cleaned+ "\""
-                    self.logger.debug("[SERIAL_HANDLER] Serial_write: Qsize > 0, no active element, getting next one: " + payload_string_cleaned_capped)
+                    self.logger.debug("[SERIAL_HANDLER] Serial_write: Queue size > 0, no active element, getting next one: " + payload_string_cleaned_capped)
                     self.ser.reset_input_buffer()
+                    self.serial_line = ""
                     self.is_first_received_line = True
                     self.direct_write(self.active_element.payload)
                     self.logger.debug("[SERIAL_HANDLER] Serial_write: Payload sent!")
@@ -141,37 +145,65 @@ class serial_handler:
             self.logger.error("[SERIAL_HANDLER] Serial error: " + str(e))
     
     def direct_write(self, strInput):
-        self.logger.debug("[SERIAL_HANDLER] ENTERED DIRECT WRITE")
-        #self.ser.reset_input_buffer()
-        payload_cleaned = self.remove_special_characters(strInput)
-        payload_cleaned_hex = self.get_hex_string(payload_cleaned)
-                    
-        self.logger.debug("[SERIAL_HANDLER] Serial_write: Sending payload: \'" + payload_cleaned + "\', HEX: " + payload_cleaned_hex)
         data_to_send = strInput.encode('utf-8')
-        self.ser.write(data_to_send)
-    
-    def process_serial_line(self, strInput, prompt=False):
-        payload_cleaned = self.remove_special_characters(strInput)
-        endstring = ""
-        if prompt:
-            endstring = " (it is a prompt)"
-        self.logger.debug("[SERIAL_HANDLER] Processing serial line: \"" + payload_cleaned +"\""+ endstring) 
-        
-        if prompt:
-            if self.active_element is not None: # it is a prompt and there is a defined active element
-                self.logger.debug("[SERIAL_HANDLER] Prompt found, calling callback: \"" + str(self.active_element.callback.__name__) + "\"")
-                self.active_element.callback(self.serial_response, self.active_element.metadata)
+        #print("sending: " + strInput)
+        try:
+            self.ser.write(data_to_send)
+        except Exception as e:
+            self.logger.critical("error while writing to serial port: " + str(e)) 
 
-            self.serial_response = ""
-            self.active_element = None
-        elif self.is_first_received_line == False: 
-            self.serial_response = self.serial_response + strInput
+        strinput_beautifed = ""
         
-        if self.is_first_received_line:
-            self.is_first_received_line = False
+        for char in strInput:
+            if char == '\x03':
+                strinput_beautifed += "^C"
+            elif char == '\r':
+                strinput_beautifed += "\\r"
+            elif char == '\n':
+                strinput_beautifed += "\\n"
+            else:
+                strinput_beautifed += char
+
+        strInput_hex = self.get_hex_string(strInput)
+        self.logger.debug("[SERIAL_HANDLER] Serial_write: Sending payload: \'" + strinput_beautifed + "\', HEX: " + strInput_hex)
+    
+    def process_serial_line(self, strInput):
+        payload_cleaned = self.remove_special_characters(strInput)
+
+        boot_finish_pattern = "I \(\d+\) [a-zA-Z_]*: Task initialization completed\."
+        boot_finish_match = re.search(boot_finish_pattern, self.serial_line)
+        
+        prompt_pattern = "[a-zA-Z0-9]+:~\$.+"
+        prompt_match = re.search(prompt_pattern, self.serial_line)
+
+        if prompt_match:
+            return_text = "[SERIAL_HANDLER] Prompt found in serial line!: \"" + payload_cleaned + "\""
+            if self.prompt_received == False: 
+                self.prompt_received = True
+            self.serial_line = ""
+            if self.active_element is not None: # it is a prompt and there is a defined active element
+                self.logger.debug(return_text + " Callback specified, invoking it: \"" + str(self.active_element.callback.__name__) + "\"")
+                self.active_element.callback(self.serial_response, self.active_element.metadata)
+                self.active_element = None
+            else:
+                self.logger.debug(return_text + " No callback specified.")
+            
+            self.serial_response = ""
+        elif boot_finish_match:
+            self.logger.debug("[SERIAL_HANDLER] Boot finish line found")
+            self.boot_finished = True
+        else:
+            self.logger.debug("[SERIAL_HANDLER] processing line: \"" + payload_cleaned) 
+            
+            if self.is_first_received_line == False: 
+                self.serial_response = self.serial_response + strInput
+            
+            if self.is_first_received_line:
+                self.is_first_received_line = False
     
     def remove_special_characters(self, input_string):
-        cleaned_string = input_string.replace('\r', '').replace('\t', '').replace('\n', '')
+       
+        cleaned_string = input_string.replace('\r', '').replace('\t', '').replace('\n', '').replace('\x03', '').replace("^[[0n", '')
         return cleaned_string
 
     def get_hex_string(self, input_string):

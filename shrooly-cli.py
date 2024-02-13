@@ -5,60 +5,67 @@ import json
 import fileconverter
 import re
 import csv
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from colorlog import ColoredFormatter
 from serial_handler import serial_handler
+from serial.tools import list_ports
 
 class shrooly:    
     json_status = ""
     file_list = []
-    prompt_enteres = False
+
     def __init__(self, logger):
         self.logger = logger
         self.serial_handler_instance = serial_handler(logger)
 
-    def connect(self, port="/dev/ttyACM0", baud=921600, login="true"):
+    def connect(self, port="/dev/ttyACM0", baud=921600, reset=True):
         connection_success = False
         self.logger.info("Connecting to Shrooly at: " + port + " @baud: " + str(baud))
-        self.serial_handler_instance.connect(port, baud)
-        self.logger.info("Successfully connected to serial!")
-        
-        #self.list_files()
+        self.serial_handler_instance.connect(port, baud, reset)
+        self.logger.info("Waiting for boot to finish..")
+        #print(self.serial_handler_instance.boot_finished)
+        while True:
+            if self.serial_handler_instance.boot_finished == True:
+                break
+            time.sleep(0.1)
+            #print("Waiting for boot to finish..")
+       
+        self.logger.info("Booted successfully!")
+        time.sleep(1)
+        retry_counter = 0
+            
+        while retry_counter < 5:
+            self.logger.info("Sending CTRL+C to Shrooly to enter interactive mode")
+            self.logger.debug("[CLI] CTRL+C sending directly")
+            self.serial_handler_instance.direct_write('\x03')
+            time.sleep(0.1)
+            self.logger.debug("[CLI] CRLF sending directly")
+            self.serial_handler_instance.direct_write('\r\n')
+            
+            time.sleep(1)
+            
+            if self.serial_handler_instance.prompt_received:
+                self.logger.info("Successfully entered interactive mode")
+                connection_success = True
+                return connection_success
+            
+            self.logger.info("Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
+            retry_counter += 1
+            time.sleep(2)
 
-        if(login=="true"):
-            retry_counter = 0   
-                
-            while retry_counter < 5:
-                self.logger.info("Sending CTRL+C to Shrooly-Terminal to enter interactive mode")
-                self.serial_handler_instance.direct_write('\x03')
-                self.logger.debug("CTRL+C sent directly")
-                time.sleep(0.5)
-                self.serial_handler_instance.direct_write('\r\n')
-                self.logger.debug("Newline sent directly")
-                time.sleep(0.5)
-                
-                if self.serial_handler_instance.prompt_received:
-                    self.logger.info("Successfully entered interactive mode")
-                    self.serial_handler_instance.direct_write('ping_rp wpt_power 1')
-                    connection_success = True
-                    return connection_success
-                self.logger.info("Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
-                retry_counter += 1
-                time.sleep(2)
-
-            self.logger.critical("Couldn't connect in 5 tries, aborting.")
-            self.serial_handler_instance.disconnect()
-            return connection_success
-        else:
-            return True
+        self.logger.critical("Couldn't connect in 5 tries, aborting.")
+        self.serial_handler_instance.disconnect()
+        return connection_success
 
     def commandInProgress(self):
         if self.serial_handler_instance.getQueueSize() > 0 or self.serial_handler_instance.getActiveElement() is not None:
             return True
         else:
             return False
+    
     def waitForCommandCompletion(self):
         while True:
             if self.commandInProgress() == False:
@@ -69,7 +76,6 @@ class shrooly:
 
     def send_file(self, file_to_stream):
         self.logger.info("File transfer process has started!")
-        #file_to_stream = "/home/pi/testfarm-v2/test.lua"
         file_name = Path(file_to_stream).name
         self.logger.debug("File name from path: " + file_name)
         file_content = ""
@@ -189,7 +195,7 @@ class shrooly:
             json_resp = json.loads(strInput)
             self.parse_json(json_resp)
         else:
-            #self.logger.info("JSON response: " + strInput)
+            print(strInput)
             pass
         
         self.json_status = strInput
@@ -266,21 +272,48 @@ if __name__ == "__main__":
     subparsers.add_parser('list_files', help='list files on Shrooly')
     subparsers.add_parser('disable_rf', help='disable Bluetooth and WiFi radios')
     
-    parser.add_argument("--serial-port", default="/dev/ttyACM0", help="set the Shrooly's serial-port")
-    parser.add_argument("--login", default="true", help="enter interactive terminal or not")
-    parser.add_argument("--serial-baud", default="921600", help="set the Shrooly's serial-port baud")
+    parser.add_argument("--serial-port", help="set the Shrooly's serial-port")
+    parser.add_argument("--serial-baud", default=921600, help="set the Shrooly's serial-port baud")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING"], default="INFO", help="Set the logging level (DEBUG, INFO, WARNING)")
 
     args = parser.parse_args()
 
-    #if args.subcommand == 'send_file':
-    #    print(f"Sending file at {args.file}")
-
     logger.setLevel(args.log_level)
-    logger.info("Shrooly CLI wrapper started")
+    logger.info("Shrooly CLI has started!")
 
+    port = args.serial_port
+    if port is None:
+        logger.info("Host OS: " + sys.platform)
+        port_list = list_ports.comports()
+        autoselected_port = ""
+
+        if len(port_list) == 1:
+                autoselected_port = port_list[0].device
+        else:
+            if sys.platform == "linux":
+                for port_iterator in port_list:
+                    if re.search("^\/dev\/ttyACM\d$", port_iterator.device):
+                        autoselected_port = port_iterator.device
+
+                if autoselected_port == "":
+                    autoselected_port = port_list[0].device
+            elif sys.platform == "darwin":
+                for port_iterator in port_list:
+                    if re.search("^\/dev\/cu.usbmodem\d*$", port_iterator.device):
+                        autoselected_port = port_iterator.device
+
+                if autoselected_port == "":
+                    autoselected_port = port_list[0].device
+            elif sys.platform == "nt":
+                logger.error("Serial port autoselect is not yet available, please select a serial port manually. Exiting")
+                sys.exit()
+        logger.info("Autoselected serial port: " + autoselected_port)
+        port = autoselected_port
+    else:
+        logger.info("Selected serial port from args: " + port)
+    
     shrooly_instance = shrooly(logger)
-    shrooly_instance.connect(args.serial_port, args.serial_baud, args.login)
+    shrooly_instance.connect(port, args.serial_baud)
 
     if args.subcommand == "send_file":
         shrooly_instance.send_file(args.file)
@@ -294,7 +327,6 @@ if __name__ == "__main__":
         shrooly_instance.read_file(args.file)
     elif args.subcommand == "get_status":
         resp = shrooly_instance.getStatus(args.format)
-        print(resp)
     elif args.subcommand == "logger":
         shrooly_instance.turn_on_humidifer()
         shrooly_instance.waitForCommandCompletion()
@@ -317,15 +349,13 @@ if __name__ == "__main__":
                     # Get the current timestamp
                     timestamp = datetime.now().isoformat()
 
-                    
                     # Generate some example data (you can replace this with your own data)
                     resp = shrooly_instance.getStatus("JSON")
                     print(type(resp))
                     print(resp)
                     resp = json.loads(resp)
                     print(resp)
-                    
-                    
+                                        
                     # Write a new row to the CSV file
                     writer.writerow(
                         {
@@ -359,6 +389,8 @@ if __name__ == "__main__":
         shrooly_instance.stop_cultivation()
         shrooly_instance.waitForCommandCompletion()
         resp = shrooly_instance.getStatus()
+    else:
+        logger.warning("No command has been specified, disconnecting and exiting.")
 
     shrooly_instance.waitForCommandCompletion()
     shrooly_instance.disconnect()
