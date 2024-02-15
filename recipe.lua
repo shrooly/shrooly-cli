@@ -6,18 +6,18 @@
 println('LUA_WORKER: Starting execution of: General.lua')
 
 --Pod name and version information reported--
-podID    = "190"
-podName  = "bb"
+podID    = "186"
+podName  = "Lions Mane"
 recipeVersion = 1
 luaAPIVersion = 3
 set_recipe_info(podID, recipeVersion, podName)
 ---------------------------------------------
 
 -----------------Constants-------------------
-white_led_brightness             = 100
+white_led_brightness             = 5
 photoperiod                      = 43200
-fan_cycle_durations              = {30, 60}  -- Unequal cycle durations in seconds, format: {on_seconds, off_seconds}
-target_rh                        = 75
+fan_cycle_durations              = {10, 180}  -- Unequal cycle durations in seconds, format: {on_seconds, off_seconds}
+target_rh                        = 100
 fan_speed                        = 100
 ---------------------------------------------
 
@@ -91,4 +91,3 @@ set_humidifier(1)
 control_lighting(current_epoch)
 control_fan(start_epoch, current_epoch)
 println('LUA_WORKER: Cultivation program ended, next run in 2000 ms')
-
