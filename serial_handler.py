@@ -36,10 +36,10 @@ class serial_handler:
         self.logger.setLevel(logger.getEffectiveLevel())
         #self.logger.setLevel("DEBUG")
     
-    def connect(self, port='/dev/ttyACM0', baud=921600, reset=True):
+    def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
         try:
-            self.ser = serial.serial_for_url(port, baud, timeout=1, do_not_open=True)
+            self.ser = serial.serial_for_url(port, baud, timeout=1, do_not_open=True, exclusive=True)
             self.ser.setRTS(LOW)
             self.ser.setDTR(LOW)
             
@@ -53,7 +53,7 @@ class serial_handler:
             self.logger.critical("Couldn't connect to serial at " + port + ", baud: " + str(baud))
             exit()
 
-        if(reset==True):
+        if(no_reset==False):
             self.logger.info("Sending hard reset to device..")
             
             self.ser.setRTS(LOW)  # EN=LOW, chip in reset
@@ -133,6 +133,7 @@ class serial_handler:
                     self.logger.debug("[SERIAL_HANDLER] Serial_write: Queue size > 0, no active element, getting next one: " + payload_string_cleaned_capped)
                     self.ser.reset_input_buffer()
                     self.serial_line = ""
+                    self.serial_response = ""
                     self.is_first_received_line = True
                     self.direct_write(self.active_element.payload)
                     self.logger.debug("[SERIAL_HANDLER] Serial_write: Payload sent!")

@@ -21,19 +21,20 @@ class shrooly:
         self.logger = logger
         self.serial_handler_instance = serial_handler(logger)
 
-    def connect(self, port="/dev/ttyACM0", baud=921600, reset=True):
+    def connect(self, port="/dev/ttyACM0", baud=921600, no_reset=False):
         connection_success = False
         self.logger.info("Connecting to Shrooly at: " + port + " @baud: " + str(baud))
-        self.serial_handler_instance.connect(port, baud, reset)
-        self.logger.info("Waiting for boot to finish..")
-        #print(self.serial_handler_instance.boot_finished)
-        while True:
-            if self.serial_handler_instance.boot_finished == True:
-                break
-            time.sleep(0.1)
-            #print("Waiting for boot to finish..")
-       
-        self.logger.info("Booted successfully!")
+        self.serial_handler_instance.connect(port, baud, no_reset)
+        
+        if no_reset == False:
+            self.logger.info("Waiting for boot to finish..")
+            while True:
+                if self.serial_handler_instance.boot_finished == True:
+                    break
+                time.sleep(0.1)
+                #print("Waiting for boot to finish..")
+            self.logger.info("Booted successfully!")
+        
         time.sleep(1)
         retry_counter = 0
             
@@ -44,7 +45,6 @@ class shrooly:
             time.sleep(0.1)
             self.logger.debug("[CLI] CRLF sending directly")
             self.serial_handler_instance.direct_write('\r\n')
-            
             time.sleep(1)
             
             if self.serial_handler_instance.prompt_received:
@@ -95,7 +95,7 @@ class shrooly:
 
         command = "fs_write"
         target_file_name = file_name
-        max_line_length = 256
+        max_line_length = 64
         
         chunks = fileconverter.string_to_comand_chunks([command, target_file_name], file_content, max_line_length)
 
@@ -122,7 +122,12 @@ class shrooly:
     def read_file(self, strInput):
         self.logger.info("Requesting read of file: " + strInput)
         request_string = f"fs_read {strInput}\r\n"
-        self.serial_handler_instance.add_to_write_queue(request_string, self.callback_open_file)
+        self.serial_handler_instance.add_to_write_queue(request_string, self.callback_read_file)
+
+    def save_file(self, strInput):
+        self.logger.info("Requesting read of file: " + strInput)
+        request_string = f"fs_read {strInput}\r\n"
+        self.serial_handler_instance.add_to_write_queue(request_string, self.callback_save_file)
 
     def list_files(self):
         self.logger.info("Requesting list of files..")
@@ -170,14 +175,39 @@ class shrooly:
         strInput_parsed = strInput.split('\n')
         self.logger.info("Response: " + strInput_parsed[0])
     
-    def callback_open_file(self, strInput, metadata):
+    def callback_read_file(self, strInput, metadata):
         strInput_parsed = strInput.split('\n')
         lines_found = 0
-        for line in strInput_parsed:
-            print(line)
-            lines_found = lines_found + 1
+        
+        if strInput_parsed[0].startswith("File does not exist"):
+            filename = strInput_parsed[0].split(':')[1]
+            self.logger.error("File doesn't exist:" + filename)
+        else:
+            for line in strInput_parsed:
+                print(line)
+                lines_found = lines_found + 1
 
-        self.logger.info("End of file, number of lines found: " + str(lines_found))
+            self.logger.info("End of file, number of lines found: " + str(lines_found))
+
+    def callback_save_file(self, strInput, metadata):
+        index = strInput.find('\n')
+        #print(index)
+        first_line = strInput[0:index]
+        #print(first_line)
+        strInput = strInput[index+1:]
+        
+        if strInput.startswith("File does not exist"):
+            filename = first_line.split(':')[1]
+            self.logger.error("File doesn't exist:" + filename)
+        else:
+            re_match = re.search(r'\(([^)]+)\)', first_line)
+            if re_match:
+                file_name = re_match.group(1)
+                with open(file_name, "w") as file:
+                    file.write(strInput)
+                self.logger.info("File successfully saved: " + file_name)
+            else:
+                self.logger.error("File name wasn't found in the first line, aborting.")
         
     def callback_acknowledgeChunk(self, strInput, metadata):
         current = metadata[0]+1
@@ -262,12 +292,14 @@ if __name__ == "__main__":
     parser_delete_file.add_argument('--file', help='name of the file to delete', required=True)
     parser_read_file = subparsers.add_parser('read_file', help='read a file')
     parser_read_file.add_argument('--file', help='name of the file to open', required=True)
+    parser_save_file = subparsers.add_parser('save_file', help='save a file')
+    parser_save_file.add_argument('--file', help='name of the file to save', required=True)
     parser_start_cultivation = subparsers.add_parser('start_cultivation', help='start a cultivation')
     parser_start_cultivation.add_argument('--file', help='name of the lua script (stored on Shrooly) to start', required=True)
     subparsers.add_parser('stop_cultivation', help='stop cultivation')
     subparsers.add_parser('logger', help='logging')
-    parser_get_status = subparsers.add_parser('get_status', help='get status of Shrooly')
-    parser_get_status.add_argument('--format', choices=["JSON", "PARSED"], help='output format', default="PARSED", required=False)
+    parser_status = subparsers.add_parser('status', help='get status of Shrooly')
+    parser_status.add_argument('--format', choices=["JSON", "PARSED"], help='output format', default="PARSED", required=False)
 
     subparsers.add_parser('list_files', help='list files on Shrooly')
     subparsers.add_parser('disable_rf', help='disable Bluetooth and WiFi radios')
@@ -275,6 +307,7 @@ if __name__ == "__main__":
     parser.add_argument("--serial-port", help="set the Shrooly's serial-port")
     parser.add_argument("--serial-baud", default=921600, help="set the Shrooly's serial-port baud")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING"], default="INFO", help="Set the logging level (DEBUG, INFO, WARNING)")
+    parser.add_argument("--no-reset", action='store_true', help="Disable reset on connection")
 
     args = parser.parse_args()
 
@@ -282,6 +315,7 @@ if __name__ == "__main__":
     logger.info("Shrooly CLI has started!")
 
     port = args.serial_port
+    
     if port is None:
         logger.info("Host OS: " + sys.platform)
         port_list = list_ports.comports()
@@ -313,9 +347,10 @@ if __name__ == "__main__":
         logger.info("Selected serial port from args: " + port)
     
     shrooly_instance = shrooly(logger)
-    shrooly_instance.connect(port, args.serial_baud)
+    shrooly_instance.connect(port, args.serial_baud, args.no_reset)
 
     if args.subcommand == "send_file":
+        shrooly_instance.delete_file(args.file)
         shrooly_instance.send_file(args.file)
         shrooly_instance.waitForCommandCompletion()
         shrooly_instance.list_files()
@@ -325,7 +360,9 @@ if __name__ == "__main__":
         shrooly_instance.list_files()
     elif args.subcommand == "read_file":
         shrooly_instance.read_file(args.file)
-    elif args.subcommand == "get_status":
+    elif args.subcommand == "save_file":
+        shrooly_instance.save_file(args.file)
+    elif args.subcommand == "status":
         resp = shrooly_instance.getStatus(args.format)
     elif args.subcommand == "logger":
         shrooly_instance.turn_on_humidifer()
