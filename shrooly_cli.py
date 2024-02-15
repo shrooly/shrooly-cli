@@ -358,7 +358,6 @@ if __name__ == "__main__":
     shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
 
     if args.subcommand == "send_file":
-        shrooly_instance.delete_file(args.file)
         shrooly_instance.send_file(args.file)
         shrooly_instance.waitForCommandCompletion()
         shrooly_instance.list_files()
