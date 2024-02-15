@@ -2,10 +2,12 @@ import argparse
 import logging # used for logging
 import threading
 import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import fileconverter
 import re
 import csv
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +15,7 @@ from colorlog import ColoredFormatter
 from serial_handler import serial_handler
 from serial.tools import list_ports
 
-class shrooly:    
+class shrooly_cli:
     json_status = ""
     file_list = []
 
@@ -21,7 +23,15 @@ class shrooly:
         self.logger = logger
         self.serial_handler_instance = serial_handler(logger)
 
-    def connect(self, port="/dev/ttyACM0", baud=921600, no_reset=False):
+    def connect(self, port=None, baud=921600, no_reset=False):
+        if port is None:
+            self.logger.info("Serial port is not specified, autoselecting it..")
+            port = self.autoselect_serial()
+        
+        if port == "":
+            self.logger.critical("No serial devices found, exiting..")
+            sys.exit()
+        
         connection_success = False
         self.logger.info("Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.connect(port, baud, no_reset)
@@ -59,6 +69,36 @@ class shrooly:
         self.logger.critical("Couldn't connect in 5 tries, aborting.")
         self.serial_handler_instance.disconnect()
         return connection_success
+    
+    def autoselect_serial(self):
+        #logger.info("Host OS: " + sys.platform)
+        port_list = list_ports.comports()
+        autoselected_port = ""
+
+        if len(port_list) == 0:
+            autoselected_port = ""
+        elif len(port_list) == 1:
+            autoselected_port = port_list[0].device
+        else:
+            if sys.platform == "linux":
+                for port_iterator in port_list:
+                    if re.search("^\/dev\/ttyACM\d$", port_iterator.device):
+                        autoselected_port = port_iterator.device
+
+                if autoselected_port == "":
+                    autoselected_port = port_list[0].device
+            elif sys.platform == "darwin":
+                for port_iterator in port_list:
+                    if re.search("^\/dev\/cu.usbmodem\d*$", port_iterator.device):
+                        autoselected_port = port_iterator.device
+
+                if autoselected_port == "":
+                    autoselected_port = port_list[0].device
+            elif sys.platform == "nt":
+                logger.error("Serial port autoselect is not yet available, please select a serial port manually. Exiting")
+                sys.exit()
+        #logger.info("Autoselected serial port: " + autoselected_port)
+        return autoselected_port
 
     def commandInProgress(self):
         if self.serial_handler_instance.getQueueSize() > 0 or self.serial_handler_instance.getActiveElement() is not None:
@@ -314,40 +354,8 @@ if __name__ == "__main__":
     logger.setLevel(args.log_level)
     logger.info("Shrooly CLI has started!")
 
-    port = args.serial_port
-    
-    if port is None:
-        logger.info("Host OS: " + sys.platform)
-        port_list = list_ports.comports()
-        autoselected_port = ""
-
-        if len(port_list) == 1:
-                autoselected_port = port_list[0].device
-        else:
-            if sys.platform == "linux":
-                for port_iterator in port_list:
-                    if re.search("^\/dev\/ttyACM\d$", port_iterator.device):
-                        autoselected_port = port_iterator.device
-
-                if autoselected_port == "":
-                    autoselected_port = port_list[0].device
-            elif sys.platform == "darwin":
-                for port_iterator in port_list:
-                    if re.search("^\/dev\/cu.usbmodem\d*$", port_iterator.device):
-                        autoselected_port = port_iterator.device
-
-                if autoselected_port == "":
-                    autoselected_port = port_list[0].device
-            elif sys.platform == "nt":
-                logger.error("Serial port autoselect is not yet available, please select a serial port manually. Exiting")
-                sys.exit()
-        logger.info("Autoselected serial port: " + autoselected_port)
-        port = autoselected_port
-    else:
-        logger.info("Selected serial port from args: " + port)
-    
-    shrooly_instance = shrooly(logger)
-    shrooly_instance.connect(port, args.serial_baud, args.no_reset)
+    shrooly_instance = shrooly_cli(logger)
+    shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
 
     if args.subcommand == "send_file":
         shrooly_instance.delete_file(args.file)
