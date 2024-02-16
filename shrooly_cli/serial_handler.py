@@ -5,7 +5,7 @@ from colorlog import ColoredFormatter
 import logging
 import queue
 import re
-from constants import (HIGH, LOW, MINIMAL_EN_LOW_DELAY)
+from shrooly_cli.constants import (HIGH, LOW, MINIMAL_EN_LOW_DELAY)
 
 class write_buffer_element:
     payload = ""

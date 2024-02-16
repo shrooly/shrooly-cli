@@ -1,21 +1,20 @@
-import argparse
-import logging # used for logging
-import threading
+import sys # used for detecting host OS
+import argparse # argument parsing
 import json
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-import fileconverter
-import re
-import csv
-import time
-from datetime import datetime
-from pathlib import Path
+import re # regex
+import csv # csv writing
+import time # pausing executing, formatting timestrings
+import logging # logging
+import signal # for handling Ctrl-C exit preoperly
 from colorlog import ColoredFormatter
-from serial_handler import serial_handler
+from datetime import datetime # getting current time for logging
+from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
+# local dependencies
+import shrooly_cli.fileconverter
+from shrooly_cli.serial_handler import serial_handler
 
-class shrooly_cli:
+class shrooly:
     json_status = ""
     file_list = []
 
@@ -302,7 +301,7 @@ class shrooly_cli:
         
         return exists
 
-if __name__ == "__main__":
+def main() -> None:
     formatter = ColoredFormatter(
         "%(asctime)s - %(log_color)s%(levelname)-8s%(reset)s %(message)s",
         datefmt='%Y-%m-%d %H:%M:%S',
@@ -321,7 +320,7 @@ if __name__ == "__main__":
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
 
-    logger = logging.getLogger('my_logger')
+    logger = logging.getLogger('logger')
     logger.addHandler(handler)
 
     parser = argparse.ArgumentParser(description="Shrooly API wrapper")
@@ -342,7 +341,7 @@ if __name__ == "__main__":
     parser_status.add_argument('--format', choices=["JSON", "PARSED"], help='output format', default="PARSED", required=False)
 
     subparsers.add_parser('list_files', help='list files on Shrooly')
-    subparsers.add_parser('disable_rf', help='disable Bluetooth and WiFi radios')
+    subparsers.add_parser('disable_radios', help='disable Bluetooth and WiFi radios')
     
     parser.add_argument("--serial-port", help="set the Shrooly's serial-port")
     parser.add_argument("--serial-baud", default=921600, help="set the Shrooly's serial-port baud")
@@ -352,9 +351,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logger.setLevel(args.log_level)
+
+    signal.signal(signal.SIGINT, lambda sig, frame: (
+        logger.critical("Ctrl-C pressed, stopping all threads.."),
+        shrooly_instance.disconnect(),
+        sys.exit()
+    ))
     logger.info("Shrooly CLI has started!")
 
-    shrooly_instance = shrooly_cli(logger)
+    shrooly_instance = shrooly(logger)
     shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
 
     if args.subcommand == "send_file":
@@ -436,5 +441,4 @@ if __name__ == "__main__":
     else:
         logger.warning("No command has been specified, disconnecting and exiting.")
 
-    shrooly_instance.waitForCommandCompletion()
     shrooly_instance.disconnect()
