@@ -370,6 +370,7 @@ def main() -> None:
         shrooly_instance.delete_file(args.file)
     elif args.subcommand == "list_files":
         shrooly_instance.list_files()
+        shrooly_instance.waitForCommandCompletion()
     elif args.subcommand == "read_file":
         shrooly_instance.read_file(args.file)
     elif args.subcommand == "save_file":
