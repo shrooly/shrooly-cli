@@ -1,2 +1,3 @@
 shrooly_cli.egg-info/
 build/
+__pycache__/

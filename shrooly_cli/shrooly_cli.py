@@ -12,9 +12,11 @@ from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
 # local dependencies
 import shrooly_cli.fileconverter
-from shrooly_cli.serial_handler import serial_handler
+from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type
 
 class shrooly:
+    status = {}
+    boot_successful = False
     json_status = ""
     file_list = []
 
@@ -22,50 +24,72 @@ class shrooly:
         self.logger = logger
         self.serial_handler_instance = serial_handler(logger)
 
+    def callback_fw_version(self, resp):
+        if len(resp) == 1:
+            self.logger.info("[CLI] FW Version: " + resp[0])
+            self.status['fw_version'] = resp
+        else:
+            self.logger.error("[CLI] Error while getting fw-version, got: " + str(resp))
+
+    def callback_compile_time(self, resp):
+        if len(resp) == 1:
+            self.logger.info("[CLI] Compile time: " + resp[0])
+            self.status['compile_time'] = resp
+        else:
+            self.logger.error("[CLI] Error while getting compile time, got: " + str(resp))
+    
+    def callback_boot(self, resp):
+        self.boot_successful = True
+        self.logger.info("[CLI] Booted successfully!")
+
     def connect(self, port=None, baud=921600, no_reset=False):
         if port is None:
-            self.logger.info("Serial port is not specified, autoselecting it..")
+            self.logger.info("[CLI] Serial port is not specified, autoselecting it..")
             port = self.autoselect_serial()
         
         if port == "":
-            self.logger.critical("No serial devices found, exiting..")
+            self.logger.critical("[CLI] No serial devices found, exiting..")
             sys.exit()
         
+        self.serial_handler_instance.add_serial_trigger("boot_finish", "I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
+        self.serial_handler_instance.add_serial_trigger("fw_version", "I \(\d+\) cpu_start: App version:\s+(\d{4}\.\d{2}-\d{2})", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
+        self.serial_handler_instance.add_serial_trigger("compile_time", "I \(\d+\) cpu_start: Compile time:\s+([a-zA-Z0-9 :]+)", self.callback_compile_time, True, serial_trigger_response_type.MATCHGROUPS)
+
         connection_success = False
-        self.logger.info("Connecting to Shrooly at: " + port + " @baud: " + str(baud))
+        self.logger.info("[CLI] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.connect(port, baud, no_reset)
         
         if no_reset == False:
-            self.logger.info("Waiting for boot to finish..")
+            self.logger.info("[CLI] Waiting for boot to finish..")
             while True:
-                if self.serial_handler_instance.boot_finished == True:
+                if self.boot_successful == True:
                     break
                 time.sleep(0.1)
-                #print("Waiting for boot to finish..")
-            self.logger.info("Booted successfully!")
+            
         
         time.sleep(1)
         retry_counter = 0
             
         while retry_counter < 5:
-            self.logger.info("Sending CTRL+C to Shrooly to enter interactive mode")
+            self.logger.info("[CLI] Sending CTRL+C to Shrooly to enter interactive mode")
             self.logger.debug("[CLI] CTRL+C sending directly")
+            request_string = '\x03\r\n'
             self.serial_handler_instance.direct_write('\x03')
             time.sleep(0.1)
             self.logger.debug("[CLI] CRLF sending directly")
-            self.serial_handler_instance.direct_write('\r\n')
-            time.sleep(1)
+            self.serial_handler_instance.add_to_write_queue('\r\n')
+            #time.sleep(1)
             
-            if self.serial_handler_instance.prompt_received:
-                self.logger.info("Successfully entered interactive mode")
-                connection_success = True
-                return connection_success
+            # if self.serial_handler_instance.prompt_received:
+            #     self.logger.info("[CLI] Successfully entered interactive mode")
+            #     connection_success = True
+            #     return connection_success
             
-            self.logger.info("Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
+            self.logger.info("[CLI] Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
             retry_counter += 1
             time.sleep(2)
 
-        self.logger.critical("Couldn't connect in 5 tries, aborting.")
+        self.logger.critical("[CLI] Couldn't connect in 5 tries, aborting.")
         self.serial_handler_instance.disconnect()
         return connection_success
     
@@ -357,7 +381,7 @@ def main() -> None:
         shrooly_instance.disconnect(),
         sys.exit()
     ))
-    logger.info("Shrooly CLI has started!")
+    logger.info("Application has started!")
 
     shrooly_instance = shrooly(logger)
     shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
@@ -443,3 +467,6 @@ def main() -> None:
         logger.warning("No command has been specified, disconnecting and exiting.")
 
     shrooly_instance.disconnect()
+
+# if __name__ == '__main__':
+#     main()
