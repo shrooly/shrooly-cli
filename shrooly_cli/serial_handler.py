@@ -8,6 +8,11 @@ from enum import Enum
 from .constants import (HIGH, LOW, MINIMAL_EN_LOW_DELAY)
 from .logger_switcher import logger_switcher, logging_level
 
+class serial_callback_status(Enum):
+    OK = 0
+    ERROR = 1
+    TIMEOUT = 2
+
 class serial_trigger_response_type(Enum):
     LINE = 0
     MATCHGROUPS = 1
@@ -23,7 +28,7 @@ class serial_trigger:
     single_use = False
     response_type = serial_trigger_response_type.BUFFER
 
-    def __init__(self, name: str, regex_pattern: str, callback=None, response_timeout=0, single_use=False, response_type=serial_trigger_response_type.BUFFER, ):
+    def __init__(self, name, regex_pattern, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=0):
         self.name = name
         self.regex_pattern = regex_pattern
         self.callback = callback
@@ -85,12 +90,10 @@ class serial_handler:
     def kill(self):
         self.logger.debug("[SERIAL_HANDLER] Kill has been called, stopping all threads")
         self.exit_signal = True
-        
-    def add_serial_trigger(self, name, regex_pattern, response_timeout=10, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER):
-        print(response_timeout)
-        serial_trigger_instance = serial_trigger(name, regex_pattern, callback, response_timeout, single_use, response_type)
-        print(response_timeout)
-        self.logger.debug("[SERIAL_HANDLER] Registering new serial trigger: Name:" + name + ", regex: \"" + regex_pattern + "\", timeout: " + str(response_timeout))
+
+    def add_serial_trigger(self, trigger_name, regex_trigger, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=10):
+        serial_trigger_instance = serial_trigger(trigger_name, regex_trigger, callback, single_use, response_type, response_timeout)
+        self.logger.debug("[SERIAL_HANDLER] Registering new serial trigger: Name:" + trigger_name + ", regex: \"" + self.get_beautified_string(regex_trigger) + "\", timeout: " + str(response_timeout))
         self.serial_trigger_array.append(serial_trigger_instance)
     
     def handle_read_serial_port(self):
@@ -107,11 +110,11 @@ class serial_handler:
             current_time = time.time()
             
             if last_check_time + 1 < current_time:
-                print("checking timeouts..")
+                #print("checking timeouts..")
                 for serial_trigger_instance in self.serial_trigger_array:
-                    if serial_trigger_instance.added_time + serial_trigger_instance.timeout > current_time:
-                        print("timeout at: " + serial_trigger_instance.name)
-                        serial_trigger_instance.callback("TIMEOUT", "")
+                    if serial_trigger_instance.added_time + serial_trigger_instance.response_timeout < current_time:
+                        #print("timeout at: " + serial_trigger_instance.name)
+                        serial_trigger_instance.callback(serial_callback_status.TIMEOUT, "")
                         serial_trigger_instance.active = False
 
                 last_check_time = time.time()
@@ -148,11 +151,11 @@ class serial_handler:
                     self.logger.debug("[SERIAL_HANDLER] Invoking callback: \"" + str(serial_trigger_instance.callback.__name__) + "\"")
                     
                     if serial_trigger_instance.response_type == serial_trigger_response_type.LINE:
-                        serial_trigger_instance.callback(self.serial_line_buffer)
+                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_line_buffer)
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.MATCHGROUPS:
-                        serial_trigger_instance.callback(regex_match.groups())
+                        serial_trigger_instance.callback(serial_callback_status.OK, regex_match.groups())
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.BUFFER: 
-                        serial_trigger_instance.callback(self.serial_buffer)
+                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_buffer)
                         # print("BUFFER")
                         # print(self.serial_buffer)
                         #self.serial_buffer = ""

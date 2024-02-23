@@ -11,7 +11,7 @@ from datetime import datetime # getting current time for logging
 from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
 # local dependencies
-from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type
+from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
 from .logger_switcher import logger_switcher, logging_level
 
 class shrooly:
@@ -79,7 +79,7 @@ class shrooly:
             time.sleep(0.1)
             self.logger.debug("[CLI] Sending CRLF")
 
-            self.serial_handler_instance.add_serial_trigger("prompt", "[a-zA-Z0-9]+:~\$.+", self.callback_prompt, True)
+            self.serial_handler_instance.add_serial_trigger("prompt", "[a-zA-Z0-9]+:~\$.\r\n", self.callback_prompt, True)
             self.serial_handler_instance.direct_write('\r\n')
             time.sleep(1)
             
@@ -95,6 +95,10 @@ class shrooly:
         self.logger.critical("[CLI] Couldn't connect in 5 tries, aborting.")
         self.serial_handler_instance.disconnect()
         return False
+    
+    def disconnect(self):
+        if self.connected:
+            self.serial_handler_instance.disconnect()
     
     def autoselect_serial(self):
         #logger.info("Host OS: " + sys.platform)
@@ -126,52 +130,72 @@ class shrooly:
         #logger.info("Autoselected serial port: " + autoselected_port)
         return autoselected_port
     
-    def callback_fw_version(self, resp):
-        if len(resp) == 1:
-            self.logger.info("[CLI] FW Version: " + resp[0])
-            self.status['fw_version'] = resp
+    def callback_fw_version(self, status, payload):
+        if len(payload) == 1:
+            self.logger.info("[CLI] FW Version: " + payload[0])
+            self.status['fw_version'] = payload
         else:
             self.logger.error("[CLI] Error while getting fw-version, got: " + str(resp))
 
-    def callback_compile_time(self, resp):
-        if len(resp) == 1:
-            self.logger.info("[CLI] Compile time: " + resp[0])
-            self.status['compile_time'] = resp
+    def callback_compile_time(self, status, payload):
+        if len(payload) == 1:
+            self.logger.info("[CLI] Compile time: " + payload[0])
+            self.status['compile_time'] = payload
         else:
             self.logger.error("[CLI] Error while getting compile time, got: " + str(resp))
     
-    def callback_boot(self, resp):
+    def callback_boot(self, status, payload):
         self.boot_successful = True
 
-    def callback_prompt(self, resp):
+    def callback_prompt(self, status, payload):
         self.login_successful = True
         self.logger.info("[CLI] Prompt received!")
 
-    def send_terminal_command(self, strInput, name="", callback=None, timeout=1):
-        self.serial_handler_instance.add_serial_trigger(name, "[a-zA-Z0-9]+:~\$.+", callback, True, serial_trigger_response_type.BUFFER)
-        self.serial_handler_instance.direct_write(strInput)
+    def terminal_command_callback(self, status, payload):
+        self.terminal_resp_status = status
+        self.terminal_resp_payload = payload
+        self.waiting_for_terminal_resp = False
+
+    waiting_for_terminal_resp = False
+    terminal_resp_status = ""
+    terminal_resp_payload = ""
+    
+    def send_terminal_command(self, strInput, name="", timeout=1):
+        self.serial_handler_instance.add_serial_trigger(name, "[a-zA-Z0-9]+:~\$.\r\n", self.terminal_command_callback, True, serial_trigger_response_type.BUFFER, 5)
+        self.serial_handler_instance.direct_write(strInput+"\r\n")
+        self.waiting_for_terminal_resp = True
+
+        while True:
+            if self.waiting_for_terminal_resp == False:
+                break
+        return self.terminal_resp_status, self.terminal_resp_payload
 
     def read_file(self, strInput):
         self.logger.info("Requesting read of file: " + strInput)
-        #request_string = f"fs_read {strInput}\r\n"
         request_string = f"fs_read {strInput}"
-        self.send_terminal_command(request_string, name="fs_read_prompt", callback=self.callback_read_file)
+        resp_status, resp_payload = self.send_terminal_command(request_string, name="fs_read_prompt")
+        print(resp_status)
+        print(resp_payload)
 
+        # strInput_parsed = strInput.split('\n')
+        # lines_found = 0
+        
+        # if strInput_parsed[0].startswith("File does not exist"):
+        #     filename = strInput_parsed[0].split(':')[1]
+        #     self.logger.error("File doesn't exist:" + filename)
+        # else:
+        #     for line in strInput_parsed:
+        #         print(line)
+        #         lines_found = lines_found + 1
 
-    # def commandInProgress(self):
-    #     if self.serial_handler_instance.getQueueSize() > 0 or self.serial_handler_instance.getActiveElement() is not None:
-    #         return True
-    #     else:
-    #         return False
-    
-    # def waitForCommandCompletion(self, timeout=10):
-    #     while True:
-    #         if self.commandInProgress() == False:
-    #             break
+        #     self.logger.info("End of file, number of lines found: " + str(lines_found))
 
-    def disconnect(self):
-        if self.connected:
-            self.serial_handler_instance.disconnect()
+    def list_files(self):
+        self.logger.info("Requesting list of files..")
+        request_string = f"fs_list"
+        resp_status, resp_payload = self.send_terminal_command(request_string, name="fs_list_prompt")
+        print(resp_status)
+        print(resp_payload)
 
     def send_file(self, file_to_stream):
         self.logger.info("File transfer process has started!")
@@ -223,10 +247,6 @@ class shrooly:
         request_string = f"fs_read {strInput}\r\n"
         self.serial_handler_instance.add_to_write_queue(request_string, self.callback_save_file)
 
-    def list_files(self):
-        self.logger.info("Requesting list of files..")
-        self.serial_handler_instance.add_to_write_queue("fs_list\r\n", self.callback_list_files)
-
     def getStatus(self, format="PARSED"):
         self.logger.info("Requesting status of device..")
         self.serial_handler_instance.add_to_write_queue("dump\r\n", self.callback_getStatus, format)
@@ -268,21 +288,6 @@ class shrooly:
     def callback_delete_file(self, strInput, metadata):
         strInput_parsed = strInput.split('\n')
         self.logger.info("Response: " + strInput_parsed[0])
-    
-    def callback_read_file(self, strInput):
-        print(strInput)
-        strInput_parsed = strInput.split('\n')
-        lines_found = 0
-        
-        if strInput_parsed[0].startswith("File does not exist"):
-            filename = strInput_parsed[0].split(':')[1]
-            self.logger.error("File doesn't exist:" + filename)
-        else:
-            for line in strInput_parsed:
-                print(line)
-                lines_found = lines_found + 1
-
-            self.logger.info("End of file, number of lines found: " + str(lines_found))
 
     def callback_save_file(self, strInput, metadata):
         index = strInput.find('\n')
@@ -427,14 +432,11 @@ def main() -> None:
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.delete_file(args.file)
     elif args.subcommand == "list_files":
-        logger.critical("subcommand not implemented, exiting")
-        # shrooly_instance.list_files()
-        # shrooly_instance.waitForCommandCompletion()
+        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+        shrooly_instance.list_files()
     elif args.subcommand == "read_file":
-        #logger.critical("not implemented, exiting")
         shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
         shrooly_instance.read_file(args.file)
-        time.sleep(10)
     elif args.subcommand == "save_file":
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.save_file(args.file)
