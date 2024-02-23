@@ -18,6 +18,8 @@ class shrooly:
     status = {}
     boot_successful = False
     login_successful = False
+    connected = False
+    communication_in_progress = False
     json_status = ""
     file_list = []
 
@@ -30,28 +32,10 @@ class shrooly:
         
         self.serial_handler_instance = serial_handler(ext_logger)
 
-    def callback_fw_version(self, resp):
-        if len(resp) == 1:
-            self.logger.info("[CLI] FW Version: " + resp[0])
-            self.status['fw_version'] = resp
-        else:
-            self.logger.error("[CLI] Error while getting fw-version, got: " + str(resp))
-
-    def callback_compile_time(self, resp):
-        if len(resp) == 1:
-            self.logger.info("[CLI] Compile time: " + resp[0])
-            self.status['compile_time'] = resp
-        else:
-            self.logger.error("[CLI] Error while getting compile time, got: " + str(resp))
-    
-    def callback_boot(self, resp):
-        self.boot_successful = True
-        self.logger.info("[CLI] Booted successfully!")
-
-    def callback_prompt(self, resp):
-        self.login_successful = True
-        self.logger.info("[CLI] Prompt received!")
-
+    def kill(self):
+        self.logger.debug("[CLI] Kill has been called, stopping all threads and subprocesses")
+        self.serial_handler_instance.kill()
+        sys.exit()
 
     def connect(self, port=None, baud=921600, no_reset=False):
         if port is None:
@@ -62,27 +46,34 @@ class shrooly:
             self.logger.critical("[CLI] No serial devices found, exiting..")
             sys.exit()
         
-        self.serial_handler_instance.add_serial_trigger("boot_finish", "I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
-        self.serial_handler_instance.add_serial_trigger("fw_version", "I \(\d+\) cpu_start: App version:\s+(\d{4}\.\d{2}-\d{2})", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
-        self.serial_handler_instance.add_serial_trigger("compile_time", "I \(\d+\) cpu_start: Compile time:\s+([a-zA-Z0-9 :]+)", self.callback_compile_time, True, serial_trigger_response_type.MATCHGROUPS)
+        if no_reset == False:
+            self.serial_handler_instance.add_serial_trigger("boot_finish", "I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
+            self.serial_handler_instance.add_serial_trigger("fw_version", "I \(\d+\) cpu_start: App version:\s+(\d{4}\.\d{2}-\d{2})", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
+            self.serial_handler_instance.add_serial_trigger("compile_time", "I \(\d+\) cpu_start: Compile time:\s+([a-zA-Z0-9 :]+)", self.callback_compile_time, True, serial_trigger_response_type.MATCHGROUPS)
 
-        connection_success = False
         self.logger.info("[CLI] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
-        self.serial_handler_instance.connect(port, baud, no_reset)
-        
+        self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
+        boot_started_time = time.time()
         if no_reset == False:
             self.logger.info("[CLI] Waiting for boot to finish..")
+            boot_tries = 0
+            boot_tries_limit = 100
             while True:
                 if self.boot_successful == True:
+                    boot_finish_time = time.time()
+                    self.logger.info("[CLI] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + "s")
                     break
                 time.sleep(0.1)
+                boot_tries+=1
+                if boot_tries == boot_tries_limit:
+                    self.logger.critical("[CLI] Couldn't finish boot in 10 seconds, exiting..")
+                    self.kill()
             
         time.sleep(1)
         retry_counter = 0
             
         while retry_counter < 5:
             self.logger.info("[CLI] Sending CTRL+C to Shrooly to enter interactive mode")
-            self.logger.debug("[CLI] Sending CTRL+C")
 
             self.serial_handler_instance.direct_write('\x03')
             time.sleep(0.1)
@@ -134,20 +125,53 @@ class shrooly:
                 sys.exit()
         #logger.info("Autoselected serial port: " + autoselected_port)
         return autoselected_port
-
-    def commandInProgress(self):
-        if self.serial_handler_instance.getQueueSize() > 0 or self.serial_handler_instance.getActiveElement() is not None:
-            return True
-        else:
-            return False
     
-    def waitForCommandCompletion(self):
-        while True:
-            if self.commandInProgress() == False:
-                break
+    def callback_fw_version(self, resp):
+        if len(resp) == 1:
+            self.logger.info("[CLI] FW Version: " + resp[0])
+            self.status['fw_version'] = resp
+        else:
+            self.logger.error("[CLI] Error while getting fw-version, got: " + str(resp))
+
+    def callback_compile_time(self, resp):
+        if len(resp) == 1:
+            self.logger.info("[CLI] Compile time: " + resp[0])
+            self.status['compile_time'] = resp
+        else:
+            self.logger.error("[CLI] Error while getting compile time, got: " + str(resp))
+    
+    def callback_boot(self, resp):
+        self.boot_successful = True
+
+    def callback_prompt(self, resp):
+        self.login_successful = True
+        self.logger.info("[CLI] Prompt received!")
+
+    def send_terminal_command(self, strInput, name="", callback=None, timeout=1):
+        self.serial_handler_instance.add_serial_trigger(name, "[a-zA-Z0-9]+:~\$.+", callback, True, serial_trigger_response_type.BUFFER)
+        self.serial_handler_instance.direct_write(strInput)
+
+    def read_file(self, strInput):
+        self.logger.info("Requesting read of file: " + strInput)
+        #request_string = f"fs_read {strInput}\r\n"
+        request_string = f"fs_read {strInput}"
+        self.send_terminal_command(request_string, name="fs_read_prompt", callback=self.callback_read_file)
+
+
+    # def commandInProgress(self):
+    #     if self.serial_handler_instance.getQueueSize() > 0 or self.serial_handler_instance.getActiveElement() is not None:
+    #         return True
+    #     else:
+    #         return False
+    
+    # def waitForCommandCompletion(self, timeout=10):
+    #     while True:
+    #         if self.commandInProgress() == False:
+    #             break
 
     def disconnect(self):
-        self.serial_handler_instance.disconnect()
+        if self.connected:
+            self.serial_handler_instance.disconnect()
 
     def send_file(self, file_to_stream):
         self.logger.info("File transfer process has started!")
@@ -194,11 +218,6 @@ class shrooly:
         request_string = f"fs_delete {strInput}\r\n"
         self.serial_handler_instance.add_to_write_queue(request_string, self.callback_delete_file)
     
-    def read_file(self, strInput):
-        self.logger.info("Requesting read of file: " + strInput)
-        request_string = f"fs_read {strInput}\r\n"
-        self.serial_handler_instance.add_to_write_queue(request_string, self.callback_read_file)
-
     def save_file(self, strInput):
         self.logger.info("Requesting read of file: " + strInput)
         request_string = f"fs_read {strInput}\r\n"
@@ -250,7 +269,8 @@ class shrooly:
         strInput_parsed = strInput.split('\n')
         self.logger.info("Response: " + strInput_parsed[0])
     
-    def callback_read_file(self, strInput, metadata):
+    def callback_read_file(self, strInput):
+        print(strInput)
         strInput_parsed = strInput.split('\n')
         lines_found = 0
         
@@ -389,92 +409,104 @@ def main() -> None:
     logger.setLevel(args.log_level)
 
     signal.signal(signal.SIGINT, lambda sig, frame: (
-        logger.critical("Ctrl-C pressed, stopping all threads.."),
+        logger.critical("Ctrl-C received from user, stopping all threads.."),
         shrooly_instance.disconnect(),
         sys.exit()
     ))
     logger.info("Application has started!")
 
     shrooly_instance = shrooly(logger)
-    shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-
+    
     if args.subcommand == "send_file":
-        shrooly_instance.send_file(args.file)
-        shrooly_instance.waitForCommandCompletion()
-        shrooly_instance.list_files()
-    if args.subcommand == "delete_file":
-        shrooly_instance.delete_file(args.file)
+        logger.critical("subcommand not implemented, exiting")
+        
+        # shrooly_instance.send_file(args.file)
+        # shrooly_instance.waitForCommandCompletion()
+        # shrooly_instance.list_files()
+    elif args.subcommand == "delete_file":
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.delete_file(args.file)
     elif args.subcommand == "list_files":
-        shrooly_instance.list_files()
-        shrooly_instance.waitForCommandCompletion()
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.list_files()
+        # shrooly_instance.waitForCommandCompletion()
     elif args.subcommand == "read_file":
+        #logger.critical("not implemented, exiting")
+        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
         shrooly_instance.read_file(args.file)
+        time.sleep(10)
     elif args.subcommand == "save_file":
-        shrooly_instance.save_file(args.file)
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.save_file(args.file)
     elif args.subcommand == "status":
-        resp = shrooly_instance.getStatus(args.format)
+        logger.critical("subcommand not implemented, exiting")
+        # resp = shrooly_instance.getStatus(args.format)
     elif args.subcommand == "logger":
-        shrooly_instance.turn_on_humidifer()
-        shrooly_instance.waitForCommandCompletion()
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        csv_file = "log-" + timestamp + ".csv"
-        field_names = ['Timestamp', 'Temperature', 'Humidity', 'VBUS', 'Fan duty', 'Fan speed', 'Humidiifer', 'Water level']
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.turn_on_humidifer()
+        # shrooly_instance.waitForCommandCompletion()
+        # timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        # csv_file = "log-" + timestamp + ".csv"
+        # field_names = ['Timestamp', 'Temperature', 'Humidity', 'VBUS', 'Fan duty', 'Fan speed', 'Humidiifer', 'Water level']
 
-        # Create the CSV file and write the header
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=field_names)
-            writer.writeheader()
+        # # Create the CSV file and write the header
+        # with open(csv_file, mode='w', newline='') as file:
+        #     writer = csv.DictWriter(file, fieldnames=field_names)
+        #     writer.writeheader()
 
-        # Infinite loop to append a line every second
-        while True:
-            try:
-                # Open the CSV file in append mode
-                with open(csv_file, mode='a', newline='') as file:
-                    writer = csv.DictWriter(file, fieldnames=field_names)
+        # # Infinite loop to append a line every second
+        # while True:
+        #     try:
+        #         # Open the CSV file in append mode
+        #         with open(csv_file, mode='a', newline='') as file:
+        #             writer = csv.DictWriter(file, fieldnames=field_names)
                     
-                    # Get the current timestamp
-                    timestamp = datetime.now().isoformat()
+        #             # Get the current timestamp
+        #             timestamp = datetime.now().isoformat()
 
-                    # Generate some example data (you can replace this with your own data)
-                    resp = shrooly_instance.getStatus("JSON")
-                    print(type(resp))
-                    print(resp)
-                    resp = json.loads(resp)
-                    print(resp)
+        #             # Generate some example data (you can replace this with your own data)
+        #             resp = shrooly_instance.getStatus("JSON")
+        #             print(type(resp))
+        #             print(resp)
+        #             resp = json.loads(resp)
+        #             print(resp)
                                         
-                    # Write a new row to the CSV file
-                    writer.writerow(
-                        {
-                            'Timestamp': timestamp, 
-                            'Temperature': resp["Monitoring"]["Temperature"],
-                            'Humidity': resp["Monitoring"]["Humidity"],
-                            'VBUS': resp["Debug"]["VBUS"],
-                            'Fan duty': resp["Debug"]["Fan duty"],
-                            'Fan speed': resp["Debug"]["Fan speed"],
-                            'Humidiifer': resp["Debug"]["Humidifier"],
-                            'Water level': resp["Monitoring"]["Water level"],
-                            })
+        #             # Write a new row to the CSV file
+        #             writer.writerow(
+        #                 {
+        #                     'Timestamp': timestamp, 
+        #                     'Temperature': resp["Monitoring"]["Temperature"],
+        #                     'Humidity': resp["Monitoring"]["Humidity"],
+        #                     'VBUS': resp["Debug"]["VBUS"],
+        #                     'Fan duty': resp["Debug"]["Fan duty"],
+        #                     'Fan speed': resp["Debug"]["Fan speed"],
+        #                     'Humidiifer': resp["Debug"]["Humidifier"],
+        #                     'Water level': resp["Monitoring"]["Water level"],
+        #                     })
                 
-                # Wait for 10 second before appending the next line
-                time.sleep(10)
-            except Exception as e:
-                pass
-            except KeyboardInterrupt:
-                shrooly_instance.waitForCommandCompletion()
-                shrooly_instance.disconnect()
-                print("Program terminated.")
-                break
+        #         # Wait for 10 second before appending the next line
+        #         time.sleep(10)
+        #     except Exception as e:
+        #         pass
+        #     except KeyboardInterrupt:
+        #         shrooly_instance.waitForCommandCompletion()
+        #         shrooly_instance.disconnect()
+        #         print("Program terminated.")
+        #         break
     elif args.subcommand == "disable_radios":
-        shrooly_instance.disable_radios()
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.disable_radios()
     elif args.subcommand == "start_cultivation":
-        shrooly_instance.start_cultivation(args.file)
-        shrooly_instance.waitForCommandCompletion()
-        time.sleep(5)
-        resp = shrooly_instance.getStatus()
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.start_cultivation(args.file)
+        # shrooly_instance.waitForCommandCompletion()
+        # time.sleep(5)
+        # resp = shrooly_instance.getStatus()
     elif args.subcommand == "stop_cultivation":
-        shrooly_instance.stop_cultivation()
-        shrooly_instance.waitForCommandCompletion()
-        resp = shrooly_instance.getStatus()
+        logger.critical("subcommand not implemented, exiting")
+        # shrooly_instance.stop_cultivation()
+        # shrooly_instance.waitForCommandCompletion()
+        # resp = shrooly_instance.getStatus()
     else:
         logger.warning("No command has been specified, disconnecting and exiting.")
 

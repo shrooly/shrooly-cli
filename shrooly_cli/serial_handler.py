@@ -18,20 +18,25 @@ class serial_trigger:
     regex_pattern = ""
     callback = None
     active = True
+    response_timeout = 0
+    added_time = 0
     single_use = False
     response_type = serial_trigger_response_type.BUFFER
 
-    def __init__(self, name: str, regex_pattern: str, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER):
+    def __init__(self, name: str, regex_pattern: str, callback=None, response_timeout=0, single_use=False, response_type=serial_trigger_response_type.BUFFER, ):
         self.name = name
         self.regex_pattern = regex_pattern
         self.callback = callback
         self.single_use = single_use
         self.response_type = response_type
+        self.response_timeout = response_timeout
+        self.added_time = time.time()
 
 class serial_handler:
     exit_signal = False        
     serial_buffer = ""
     serial_trigger_array = []
+    serial_line_buffer = ""
 
     logger = logger_switcher()
     
@@ -42,8 +47,6 @@ class serial_handler:
         
         if ext_logger is not None: 
             self.logger.setLevel(ext_logger.getEffectiveLevel())
-        else:
-            self.logger.setLevel(logging_level.info)
     
     def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
@@ -60,6 +63,7 @@ class serial_handler:
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Couldn't connect to serial at " + port + ", baud: " + str(baud) + ". Exception: " + str(e))
             self.kill()
+            return False
 
         if(no_reset==False):
             self.logger.info("[SERIAL_HANDLER] Sending hard reset to device..")
@@ -72,6 +76,7 @@ class serial_handler:
         self.read_thread.start()
 
         self.logger.debug("[SERIAL_HANDLER] Serial connection successful!")
+        return True
 
     def disconnect(self):
         self.logger.info("[SERIAL_HANDLER] Serial disconnect has been called")
@@ -81,9 +86,11 @@ class serial_handler:
         self.logger.debug("[SERIAL_HANDLER] Kill has been called, stopping all threads")
         self.exit_signal = True
         
-    def add_serial_trigger(self, name, regex_pattern, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER):
-        serial_trigger_instance = serial_trigger(name, regex_pattern, callback, single_use, response_type)
-        self.logger.debug("[SERIAL_HANDLER] Registering new serial trigger: Name:" + name + ", regex: \"" + regex_pattern + "\"")
+    def add_serial_trigger(self, name, regex_pattern, response_timeout=10, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER):
+        print(response_timeout)
+        serial_trigger_instance = serial_trigger(name, regex_pattern, callback, response_timeout, single_use, response_type)
+        print(response_timeout)
+        self.logger.debug("[SERIAL_HANDLER] Registering new serial trigger: Name:" + name + ", regex: \"" + regex_pattern + "\", timeout: " + str(response_timeout))
         self.serial_trigger_array.append(serial_trigger_instance)
     
     def handle_read_serial_port(self):
@@ -91,13 +98,25 @@ class serial_handler:
             self.logger.critical("[SERIAL_HANDLER] Serial port is not open while attempting to read, exiting..")
             self.kill()
 
-        serial_line_buffer = ""
-
+        last_check_time = 0
         while True: # infinite loop for handling reads
             if self.exit_signal: # if the external exit_signal is raised, kill the loop
                 self.logger.debug("[SERIAL_HANDLER] Exiting serial read loop")
                 break
             
+            current_time = time.time()
+            
+            if last_check_time + 1 < current_time:
+                print("checking timeouts..")
+                for serial_trigger_instance in self.serial_trigger_array:
+                    if serial_trigger_instance.added_time + serial_trigger_instance.timeout > current_time:
+                        print("timeout at: " + serial_trigger_instance.name)
+                        serial_trigger_instance.callback("TIMEOUT", "")
+                        serial_trigger_instance.active = False
+
+                last_check_time = time.time()
+            
+            self.serial_trigger_array = [obj for obj in self.serial_trigger_array if obj.active]
             try: # try to read, exit the script if error is detected
                 serial_cache = self.ser.read_all()
             except Exception as e:
@@ -109,17 +128,18 @@ class serial_handler:
 
             for serial_character in serial_cache:
                 #self.logger.debug("[SERIAL_HANDLER] SERIAL CHAR RECEIVED: " + serial_character)
-                serial_line_buffer = serial_line_buffer + str(serial_character)
+                self.serial_line_buffer = self.serial_line_buffer + str(serial_character)
+                
                 if(serial_character == '\n'):
-                    self.logger.debug("[SERIAL_HANDLER] processing line: " + self.remove_special_characters(serial_line_buffer))
-                    self.process_serial_line_buffer(serial_line_buffer)
-                    self.serial_buffer += serial_line_buffer
-                    serial_line_buffer = ""
+                    self.logger.debug("[SERIAL_HANDLER] processing line: " + self.remove_special_characters(self.serial_line_buffer))
+                    self.process_serial_line_buffer()
+                    self.serial_buffer = self.serial_buffer + self.serial_line_buffer
+                    self.serial_line_buffer = ""
 
-    def process_serial_line_buffer(self, serial_line_buffer):
+    def process_serial_line_buffer(self):
         for serial_trigger_instance in self.serial_trigger_array:            
             regex_pattern = serial_trigger_instance.regex_pattern
-            regex_match = re.search(regex_pattern, serial_line_buffer)
+            regex_match = re.search(regex_pattern, self.serial_line_buffer)
             
             if regex_match: # If regex is a match
                 self.logger.debug("[SERIAL_HANDLER] Match at: \"" + serial_trigger_instance.name + "\"")
@@ -128,12 +148,14 @@ class serial_handler:
                     self.logger.debug("[SERIAL_HANDLER] Invoking callback: \"" + str(serial_trigger_instance.callback.__name__) + "\"")
                     
                     if serial_trigger_instance.response_type == serial_trigger_response_type.LINE:
-                        serial_trigger_instance.callback(serial_line_buffer)
+                        serial_trigger_instance.callback(self.serial_line_buffer)
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.MATCHGROUPS:
                         serial_trigger_instance.callback(regex_match.groups())
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.BUFFER: 
                         serial_trigger_instance.callback(self.serial_buffer)
-                        self.serial_buffer = ""
+                        # print("BUFFER")
+                        # print(self.serial_buffer)
+                        #self.serial_buffer = ""
                 else: # There is no callback
                     self.logger.debug("[SERIAL_HANDLER] No callback has been specified")
 
@@ -146,69 +168,34 @@ class serial_handler:
 
         self.serial_trigger_array = [obj for obj in self.serial_trigger_array if obj.active]
 
-    # def add_to_write_queue(self, payload, callback=None, metadata=""):
-    #     element_to_put = write_buffer_element(payload, callback, metadata)
-        
-    #     payload_cleaned = self.remove_special_characters(payload)
-    #     payload_cleaned_hex = self.get_hex_string(payload_cleaned)
-
-    #     self.logger.debug("[SERIAL_HANDLER] Added to serial queue: \'" + str(payload_cleaned) + "\', HEX: " + payload_cleaned_hex)
-    #     self.write_buffer_queue.put(element_to_put)
-    
-    # def handle_write_serial_port(self):
-    #     try:
-    #         while True:
-    #             if self.exit_signal:
-    #                 self.logger.debug("[SERIAL_HANDLER] Exiting serial write thread")
-    #                 break
-
-    #             if self.write_buffer_queue.qsize() > 0 and self.active_element == None:
-    #                 self.active_element = self.write_buffer_queue.get()
-    #                 payload_string = str(self.active_element.payload)
-    #                 payload_string_cleaned = self.remove_special_characters(payload_string)
-                    
-    #                 if (len(payload_string_cleaned) > 20):
-    #                     payload_string_cleaned = payload_string_cleaned[0:20] + "..."
-                    
-    #                 payload_string_cleaned_capped = "\"" + payload_string_cleaned+ "\""
-    #                 self.logger.debug("[SERIAL_HANDLER] Serial_write: Queue size > 0, no active element, getting next one: " + payload_string_cleaned_capped)
-    #                 self.ser.reset_input_buffer()
-    #                 self.serial_line = ""
-    #                 self.serial_response = ""
-    #                 self.is_first_received_line = True
-    #                 self.direct_write(self.active_element)
-    #                 self.logger.debug("[SERIAL_HANDLER] Serial_write: Payload sent!")
-                
-    #             if self.active_element is not None:
-    #                 self.logger.debug("[SERIAL_HANDLER] Serial_write: Active element is being processed, waiting for completion. Qsize: " + str(self.write_buffer_queue.qsize()))
-    #                 time.sleep(0.1)
-                
-    #     except serial.SerialException as e:
-    #         self.logger.error("[SERIAL_HANDLER] Serial error: " + str(e))
-    
     def direct_write(self, strInput):
         data_to_send = strInput.encode('utf-8')
-        
+        self.serial_buffer = ""
+        self.serial_line_buffer = ""
+        self.ser.flushInput()
         try:
             self.ser.write(data_to_send)
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Error while writing to serial port: " + str(e)) 
-
-        strinput_beautifed = ""
         
-        for char in strInput:
-            if char == '\x03':
-                strinput_beautifed += "^C"
-            elif char == '\r':
-                strinput_beautifed += "\\r"
-            elif char == '\n':
-                strinput_beautifed += "\\n"
-            else:
-                strinput_beautifed += char
-
         strInput_hex = self.get_hex_string(strInput)
-        self.logger.debug("[SERIAL_HANDLER] Serial_write: Sending payload: \'" + strinput_beautifed + "\', HEX: " + strInput_hex)
+        strInput_beatufied = self.get_beautified_string(strInput)
+        self.logger.debug("[SERIAL_HANDLER] Serial_write: Sending payload: \'" + strInput_beatufied + "\', HEX: " + strInput_hex)
     
+    def get_beautified_string(self, input_string):
+        string_beautifed = ""
+        for char in input_string:
+            if char == '\x03':
+                string_beautifed += "^C"
+            elif char == '\r':
+                string_beautifed += "\\r"
+            elif char == '\n':
+                string_beautifed += "\\n"
+            else:
+                string_beautifed += char
+
+        return string_beautifed
+
     def remove_special_characters(self, input_string):
         cleaned_string = input_string.replace('\r', '').replace('\t', '').replace('\n', '').replace('\x03', '').replace("^[[0n", '')
         return cleaned_string

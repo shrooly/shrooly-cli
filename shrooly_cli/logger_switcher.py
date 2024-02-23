@@ -1,13 +1,13 @@
 class logging_level:
-    debug = 10
-    info = 20
-    warning = 30
-    error = 40
-    critical = 50
+    DEBUG = 10
+    INFO = 20
+    WARNING = 30
+    ERROR = 40
+    CRITICAL = 50
 
 class logger_switcher:
     ext_log_pipe = None
-    level = 10
+    level = logging_level.INFO
 
     def setLevel(self, level):
         if self.ext_log_pipe != None:
