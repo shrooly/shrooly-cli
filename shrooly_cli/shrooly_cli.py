@@ -11,18 +11,24 @@ from datetime import datetime # getting current time for logging
 from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
 # local dependencies
-import shrooly_cli.fileconverter
 from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type
+from .logger_switcher import logger_switcher, logging_level
 
 class shrooly:
     status = {}
     boot_successful = False
+    login_successful = False
     json_status = ""
     file_list = []
 
-    def __init__(self, logger):
-        self.logger = logger
-        self.serial_handler_instance = serial_handler(logger)
+    logger = logger_switcher()
+
+    def __init__(self, ext_logger=None):
+        if ext_logger != None:
+            self.logger.ext_log_pipe = ext_logger
+            self.logger.ext_log_pipe.setLevel(ext_logger.getEffectiveLevel())
+        
+        self.serial_handler_instance = serial_handler(ext_logger)
 
     def callback_fw_version(self, resp):
         if len(resp) == 1:
@@ -41,6 +47,11 @@ class shrooly:
     def callback_boot(self, resp):
         self.boot_successful = True
         self.logger.info("[CLI] Booted successfully!")
+
+    def callback_prompt(self, resp):
+        self.login_successful = True
+        self.logger.info("[CLI] Prompt received!")
+
 
     def connect(self, port=None, baud=921600, no_reset=False):
         if port is None:
@@ -66,24 +77,25 @@ class shrooly:
                     break
                 time.sleep(0.1)
             
-        
         time.sleep(1)
         retry_counter = 0
             
         while retry_counter < 5:
             self.logger.info("[CLI] Sending CTRL+C to Shrooly to enter interactive mode")
-            self.logger.debug("[CLI] CTRL+C sending directly")
-            request_string = '\x03\r\n'
+            self.logger.debug("[CLI] Sending CTRL+C")
+
             self.serial_handler_instance.direct_write('\x03')
             time.sleep(0.1)
-            self.logger.debug("[CLI] CRLF sending directly")
-            self.serial_handler_instance.add_to_write_queue('\r\n')
-            #time.sleep(1)
+            self.logger.debug("[CLI] Sending CRLF")
+
+            self.serial_handler_instance.add_serial_trigger("prompt", "[a-zA-Z0-9]+:~\$.+", self.callback_prompt, True)
+            self.serial_handler_instance.direct_write('\r\n')
+            time.sleep(1)
             
-            # if self.serial_handler_instance.prompt_received:
-            #     self.logger.info("[CLI] Successfully entered interactive mode")
-            #     connection_success = True
-            #     return connection_success
+            if self.login_successful:
+                self.logger.info("[CLI] Successfully entered interactive mode")
+                self.login_successful = True
+                return True
             
             self.logger.info("[CLI] Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
             retry_counter += 1
@@ -91,7 +103,7 @@ class shrooly:
 
         self.logger.critical("[CLI] Couldn't connect in 5 tries, aborting.")
         self.serial_handler_instance.disconnect()
-        return connection_success
+        return False
     
     def autoselect_serial(self):
         #logger.info("Host OS: " + sys.platform)
