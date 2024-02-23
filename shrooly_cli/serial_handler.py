@@ -42,6 +42,8 @@ class serial_handler:
         
         if ext_logger is not None: 
             self.logger.setLevel(ext_logger.getEffectiveLevel())
+        else:
+            self.logger.setLevel(logging_level.info)
     
     def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
