@@ -10,9 +10,20 @@ from colorlog import ColoredFormatter
 from datetime import datetime # getting current time for logging
 from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
+from dateutil import parser
+import yaml
 # local dependencies
 from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
 from .logger_switcher import logger_switcher, logging_level
+
+class shrooly_file:
+    def __init__(self, name, size, last_modified):
+        self.name = name
+        self.size = size
+        self.last_modified = last_modified
+
+    def __repr__(self):
+        return f"filename: \"{self.name}\", size: {self.size} byte(s), last_modified: {self.last_modified}"
 
 class shrooly:
     status = {}
@@ -50,10 +61,12 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("boot_finish", "I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
             self.serial_handler_instance.add_serial_trigger("fw_version", "I \(\d+\) cpu_start: App version:\s+(\d{4}\.\d{2}-\d{2})", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("compile_time", "I \(\d+\) cpu_start: Compile time:\s+([a-zA-Z0-9 :]+)", self.callback_compile_time, True, serial_trigger_response_type.MATCHGROUPS)
+            self.serial_handler_instance.add_serial_trigger("hw_revision", "I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+ \(PCB v\d\.\d\))", lambda x, y: self.logger.info("[CLI] Hardware revision: " + y[0]), True, serial_trigger_response_type.MATCHGROUPS)
 
         self.logger.info("[CLI] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
         boot_started_time = time.time()
+        
         if no_reset == False:
             self.logger.info("[CLI] Waiting for boot to finish..")
             boot_tries = 0
@@ -61,7 +74,7 @@ class shrooly:
             while True:
                 if self.boot_successful == True:
                     boot_finish_time = time.time()
-                    self.logger.info("[CLI] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + "s")
+                    self.logger.info("[CLI] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + " s")
                     break
                 time.sleep(0.1)
                 boot_tries+=1
@@ -135,14 +148,14 @@ class shrooly:
             self.logger.info("[CLI] FW Version: " + payload[0])
             self.status['fw_version'] = payload
         else:
-            self.logger.error("[CLI] Error while getting fw-version, got: " + str(resp))
+            self.logger.error("[CLI] Error while getting fw-version, got: " + str(payload))
 
     def callback_compile_time(self, status, payload):
         if len(payload) == 1:
             self.logger.info("[CLI] Compile time: " + payload[0])
             self.status['compile_time'] = payload
         else:
-            self.logger.error("[CLI] Error while getting compile time, got: " + str(resp))
+            self.logger.error("[CLI] Error while getting compile time, got: " + str(payload))
     
     def callback_boot(self, status, payload):
         self.boot_successful = True
@@ -191,11 +204,26 @@ class shrooly:
         #     self.logger.info("End of file, number of lines found: " + str(lines_found))
 
     def list_files(self):
-        self.logger.info("Requesting list of files..")
-        request_string = f"fs_list"
+        self.logger.info("[CLI] Requesting list of files..")
+        request_string = f"fs list"
+        
         resp_status, resp_payload = self.send_terminal_command(request_string, name="fs_list_prompt")
-        print(resp_status)
-        print(resp_payload)
+        self.logger.debug("[CLI] Response status:" + str(resp_status))
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[CLI] Error during request: " + str(resp_status))
+        
+        yaml_body = resp_payload[resp_payload.find("\r\n")+2:]
+        
+        files = []
+        parsed_data = yaml.safe_load(yaml_body)
+        
+        for filename, file_data in parsed_data.get("Files", {}).items():
+            name = filename
+            size = int(file_data.get("Size").split()[0])  # Parse size as number
+            last_modified = file_data.get("Last modified on")  # Parse date string
+            files.append(shrooly_file(name, size, last_modified))
+
+        return files
 
     def send_file(self, file_to_stream):
         self.logger.info("File transfer process has started!")
@@ -269,21 +297,6 @@ class shrooly:
     def stop_cultivation(self):
         self.logger.info("Stopping cultivation")
         self.serial_handler_instance.add_to_write_queue("stop_cultivation\r\n", self.callback_stop_cultivation)
-
-    def callback_list_files(self, strInput, metadata):
-        strInput_parsed = strInput.split('\n')
-        files_found = 0
-        self.file_list = []
-        for line in strInput_parsed:
-            filename_pattern = "[a-zA-Z0-9]+\.[a-zA-Z0-9]+$"
-            filename_match = re.search(filename_pattern, line)
-
-            if filename_match:
-                self.logger.info("> " + line)
-                files_found += 1
-                self.file_list.append(line)
-            
-        self.logger.info("End of list, number of files found: " + str(files_found))
     
     def callback_delete_file(self, strInput, metadata):
         strInput_parsed = strInput.split('\n')
@@ -422,21 +435,23 @@ def main() -> None:
 
     shrooly_instance = shrooly(logger)
     
-    if args.subcommand == "send_file":
+    if args.subcommand == "list_files":
+        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+        files = shrooly_instance.list_files()
+        logger.info("Found " + str(len(files)) + " file(s):")
+        for file in files:
+            logger.info(file)
+    elif args.subcommand == "read_file":
+        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+        shrooly_instance.read_file(args.file)
+    elif args.subcommand == "send_file":
         logger.critical("subcommand not implemented, exiting")
-        
         # shrooly_instance.send_file(args.file)
         # shrooly_instance.waitForCommandCompletion()
         # shrooly_instance.list_files()
     elif args.subcommand == "delete_file":
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.delete_file(args.file)
-    elif args.subcommand == "list_files":
-        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        shrooly_instance.list_files()
-    elif args.subcommand == "read_file":
-        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        shrooly_instance.read_file(args.file)
     elif args.subcommand == "save_file":
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.save_file(args.file)
