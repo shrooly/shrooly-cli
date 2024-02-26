@@ -10,7 +10,6 @@ from colorlog import ColoredFormatter
 from datetime import datetime # getting current time for logging
 from pathlib import Path # for opening and saving files
 from serial.tools import list_ports
-from dateutil import parser
 import yaml
 # local dependencies
 from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
