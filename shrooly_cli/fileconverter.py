@@ -1,24 +1,18 @@
-import serial
-import time
 import argparse
 
-def string_to_comand_chunks(args, content, maxlinelen):
-    command = ""
-    for argpart in args:
-        command += argpart
-        command += " "
+def string_to_comand_chunks(offset, content, maxlinelen):
+    print("offset: " + str(offset))
 
-    #print(maxlinelen)
-    #print(len(command))
     # payloadcount must be an even number because one char is represented by two hex digits
-    payloadcount = maxlinelen - len(command) - (maxlinelen - len(command))%2
-    #print("No of payloads: " + str(payloadcount))
-
-    # Buffer to store 64-byte chunks
+    payloadcount = maxlinelen - offset - (maxlinelen - offset)%2
+    print("payload length: " + str(payloadcount))
+    
+    print("content length: " + str(len(content)))
+    # Buffer to store chunks
     array = []
     buffer = ""
-
     index = 0
+    
     while index < len(content):
         char = content[index]
         index += 1
@@ -26,15 +20,15 @@ def string_to_comand_chunks(args, content, maxlinelen):
         hex_value = format(ord(char), '02x')
         buffer += hex_value
 
-        if len(buffer) == payloadcount:
-            data = f"{command}{buffer}"
-            array.append(data)
+        if len(buffer) >= payloadcount:
+            #print("payload length limit reached, index: " + str(index) + ", appending: " + buffer)
+            array.append(buffer)
             buffer = ""
-
-    # Stream any remaining characters
-    data = f"{command}{buffer}"
-    array.append(data)
-    buffer = ""
+    
+    #print("Exited chunk making loop")
+    if buffer:
+        #print("Remaining stuff: " + buffer) 
+        array.append(buffer)
 
     return array
 
@@ -47,9 +41,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print(args.target_device)
-    print(args.target_fname)
-    print(args.file_to_stream)
+    # print(args.target_device)
+    # print(args.target_fname)
+    # print(args.file_to_stream)
 
     file_content = ""
     with open(args.file_to_stream, 'r') as file:
