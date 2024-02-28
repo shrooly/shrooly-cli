@@ -1,5 +1,5 @@
 shrooly_cli.egg-info/
-build/
 __pycache__/
 recipe.lua
 testfile.lua
+examples/

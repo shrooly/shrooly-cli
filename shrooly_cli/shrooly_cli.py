@@ -53,7 +53,7 @@ class terminal_handler:
             self.waiting_for_terminal_resp = True
 
             while True: # TBD: kellene timeout ide is, hátha serial rétegen gond van
-                if self.waiting_for_terminal_resp == False:
+                if self.waiting_for_terminal_resp is False:
                     break
             return self.terminal_resp_status, self.terminal_resp_payload
 
@@ -120,7 +120,6 @@ class shrooly:
                     self.kill()
             
         time.sleep(1)
-        retry_counter = 0
             
         self.logger.info("[CLI] Sending CTRL+C to Shrooly to enter interactive mode")
 
@@ -134,14 +133,9 @@ class shrooly:
             self.logger.info("[CLI] Successfully entered interactive mode")
             self.login_successful = True
             return True
-        
-        self.logger.info("[CLI] Prompt wasn't received in 500 ms, retry no. " + str(retry_counter+1) + ". Waiting 2000 ms before retry")
-        retry_counter += 1
-        time.sleep(2)
-
-        self.logger.critical("[CLI] Couldn't connect in 5 tries, aborting.")
-        self.serial_handler_instance.disconnect()
-        return False
+        else:
+            self.serial_handler_instance.disconnect()
+            return False
     
     def disconnect(self):
         if self.connected:

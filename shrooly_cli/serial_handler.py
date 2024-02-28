@@ -92,8 +92,10 @@ class serial_handler:
         
         # Calling every outstanding serial trigger with status.ERROR, empty payload
         for serial_trigger_instance in self.serial_trigger_array:
-            serial_trigger_instance.callback(serial_callback_status.ERROR, "")
-            serial_trigger_instance.active = False
+            
+            if serial_trigger_instance.single_use is True:
+                serial_trigger_instance.callback(serial_callback_status.ERROR, "")
+                serial_trigger_instance.active = False
 
         self.serial_trigger_array = []
         self.exit_signal = True
