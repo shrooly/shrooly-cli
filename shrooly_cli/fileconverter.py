@@ -1,13 +1,11 @@
 import argparse
 
 def string_to_comand_chunks(offset, content, maxlinelen):
-    print("offset: " + str(offset))
-
     # payloadcount must be an even number because one char is represented by two hex digits
     payloadcount = maxlinelen - offset - (maxlinelen - offset)%2
-    print("payload length: " + str(payloadcount))
-    
-    print("content length: " + str(len(content)))
+    # print("offset: " + str(offset))
+    # print("payload length: " + str(payloadcount))
+    # print("content length: " + str(len(content)))
     # Buffer to store chunks
     array = []
     buffer = ""

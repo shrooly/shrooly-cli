@@ -89,6 +89,13 @@ class serial_handler:
 
     def kill(self):
         self.logger.debug("[SERIAL_HANDLER] Kill has been called, stopping all threads")
+        
+        # Calling every outstanding serial trigger with status.ERROR, empty payload
+        for serial_trigger_instance in self.serial_trigger_array:
+            serial_trigger_instance.callback(serial_callback_status.ERROR, "")
+            serial_trigger_instance.active = False
+
+        self.serial_trigger_array = []
         self.exit_signal = True
 
     def add_serial_trigger(self, trigger_name, regex_trigger, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=10):
@@ -123,7 +130,7 @@ class serial_handler:
             try: # try to read, exit the script if error is detected
                 serial_cache = self.ser.read_all()
             except Exception as e:
-                self.logger.critical("[SERIAL_HANDLER] Serial error: " + str(e))
+                self.logger.critical("[SERIAL_HANDLER] Serial read error: " + str(e))
                 self.kill()
                 continue
 
@@ -180,6 +187,7 @@ class serial_handler:
             self.ser.write(data_to_send)
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Error while writing to serial port: " + str(e)) 
+            self.kill()
         
         strInput_hex = self.get_hex_string(strInput)
         strInput_beatufied = self.get_beautified_string(strInput)
