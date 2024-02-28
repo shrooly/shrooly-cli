@@ -251,6 +251,8 @@ class shrooly:
         if payload_body[1].startswith("status: file does not exist"):
             return command_success.ERROR, ""
         
+        resp_payload = resp_payload.split("data: ")[1]
+
         return command_success.OK, resp_payload
 
     def send_file(self, file_name):
@@ -518,9 +520,9 @@ def main() -> None:
             logger.critical("[CLI] Error during connection, exiting..")
             shrooly_instance.disconnect()
             sys.exit()
-        resp = shrooly_instance.send_file(args.file)
+        success = shrooly_instance.send_file(args.file)
 
-        if resp == command_success.OK:
+        if success == command_success.OK:
             logger.info("[CLI] File transfer success!")
         else:
             logger.error("[CLI] Error during file transfer, exiting..")
