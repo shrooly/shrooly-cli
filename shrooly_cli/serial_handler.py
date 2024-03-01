@@ -121,7 +121,7 @@ class serial_handler:
             if last_check_time + 1 < current_time:
                 #print("checking timeouts..")
                 for serial_trigger_instance in self.serial_trigger_array:
-                    if serial_trigger_instance.added_time + serial_trigger_instance.response_timeout < current_time:
+                    if serial_trigger_instance.response_timeout > 0 and serial_trigger_instance.added_time + serial_trigger_instance.response_timeout < current_time:
                         #print("timeout at: " + serial_trigger_instance.name)
                         serial_trigger_instance.callback(serial_callback_status.TIMEOUT, "")
                         serial_trigger_instance.active = False
