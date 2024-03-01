@@ -174,14 +174,19 @@ class shrooly:
     def callback_fw_version(self, status, payload):
         if status == serial_callback_status.OK:
             self.logger.info("[CLI] FW Version: " + payload[0])
-            self.status['fw_version'] = payload
+            json_line = {}
+            json_line['Firmware'] = {'version': payload[0],'build_date': payload[1]}
+            self.status.update(json_line)
         else:
             self.logger.error("[CLI] Error while getting fw-version, got: " + str(payload))
 
     def callback_hw_version(self, status, payload):
         if status == serial_callback_status.OK and len(payload) == 2:
             self.logger.info("[CLI] HW Version: " + payload[0] + " (" + payload[1] + ")")
-            self.status['hw_version'] = payload
+            
+            json_line = {}
+            json_line['Hardware'] = {'version': payload[1], 'hwcfg':payload[0]}
+            self.status.update(json_line)
         else:
             self.logger.error("[CLI] Error while getting hw-version, got: " + str(payload))
 
@@ -224,19 +229,47 @@ class shrooly:
 
         return command_success.OK, files
 
-    def getStatus(self, format="PARSED"):
+    def updateStatus(self, format="PARSED"):
         self.logger.info("[CLI] Requesting status of device..")
         request_string = f"status"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="status_prompt")
         self.logger.debug("[CLI] Response status:" + str(resp_status))
+        
         if resp_status is not serial_callback_status.OK:
             self.logger.error("[CLI] Error during request: " + str(resp_status))
+            return command_success.ERROR, ""
 
-        yaml_body = resp_payload[resp_payload.find("\r\n")+2:]
-        
+        yaml_body = resp_payload[resp_payload.find("\r\n")+2:]        
         yaml_data = yaml.safe_load(yaml_body)
-        self.status.update(yaml_data) # TBD: manual update, omitting (%)-s
-        return yaml_data
+        
+        json_resp = {}
+        for yaml_block in yaml_data.items():
+            category_parsed = yaml_block[0]
+            yaml_body = yaml_block[1]
+            
+            json_resp[category_parsed] = []
+            json_line = {}
+            for dictionary in yaml_body:
+                
+                for key, value in dictionary.items():
+                    regex_str = "([A-Za-z_]+)[\(%\)]*"
+                    re_match = re.search(regex_str, key)
+                    
+                    if re_match:
+                        key_new = re_match.group(1)
+                        if key_new == "Datetime":
+                            value = str(value.isoformat())
+                        json_line[key_new] = value
+                    else:
+                        print("no regex at: " + key)
+
+            json_resp[category_parsed] = json_line
+        
+        print(json_resp)
+        self.status.update(json_resp)
+        #self.status.update(json_resp)
+
+        return command_success.OK, json_resp
     
     def read_file(self, strInput):
         self.logger.info("Requesting read of file: " + strInput)
@@ -346,6 +379,7 @@ class shrooly:
             
             if retries > 5:
                 self.logger.error("[CLI] Too many retries during sending of file. Exiting..")
+                break
 
         #self.logger.info("[CLI] File transfer has finished!")
         end_time = time.time()
@@ -544,11 +578,21 @@ def main() -> None:
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.save_file(args.file)
     elif args.subcommand == "status":
-        shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        resp = shrooly_instance.getStatus(args.format)
-        print(shrooly_instance.status)
-        yaml_out = yaml.dump(shrooly_instance.status)
-        print(yaml_out)
+        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+        
+        if success == False:
+            logger.critical("[CLI] Error during connection, exiting..")
+            shrooly_instance.disconnect()
+            sys.exit()
+        
+        success, resp = shrooly_instance.updateStatus(args.format)
+        
+        if success:
+            logger.info("Status updated")
+            json_converted = json.dumps(shrooly.status, indent=4)
+            print(json_converted)
+        #yaml_out = yaml.dump(shrooly_instance.status)
+        #print(yaml_out)
     elif args.subcommand == "logger":
         logger.critical("subcommand not implemented, exiting")
         # shrooly_instance.turn_on_humidifer()
