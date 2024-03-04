@@ -4,6 +4,7 @@ import json
 import re # regex
 import csv # csv writing
 import logging # logging
+import time
 import signal # for handling Ctrl-C exit preoperly
 from colorlog import ColoredFormatter
 from datetime import datetime # getting current time for logging
@@ -11,6 +12,33 @@ from datetime import datetime # getting current time for logging
 # local dependencies
 from .shrooly import shrooly, command_success
 from .logger_switcher import logger_switcher, logging_level
+from .constants import MIN_FW_VERSION
+
+def compare_calver_versions(version1, version2):
+    """
+    Compare two calendar versions (CalVer) strings
+    Returns:
+    -1 if version1 < version2
+     0 if version1 == version2
+     1 if version1 > version2
+    """
+    def parse_calver(version):
+        # Remove 'v' prefix and split the string by '.'
+        version = version.lstrip('v')
+        year, month_patch = version.split('.', 1)
+        month, patch = month_patch.split('-', 1)
+        return int(year), int(month), int(patch)
+
+    year1, month1, patch1 = parse_calver(version1)
+    year2, month2, patch2 = parse_calver(version2)
+
+    if year1 != year2:
+        return -1 if year1 < year2 else 1
+    if month1 != month2:
+        return -1 if month1 < month2 else 1
+    if patch1 != patch2:
+        return -1 if patch1 < patch2 else 1
+    return 0
 
 def main() -> None:
     formatter = ColoredFormatter(
@@ -44,13 +72,13 @@ def main() -> None:
     parser_read_file.add_argument('--file', help='name of the file to open', required=True)
     parser_save_file = subparsers.add_parser('save_file', help='save a file')
     parser_save_file.add_argument('--file', help='name of the file to save', required=True)
-    parser_start_cultivation = subparsers.add_parser('start_cultivation', help='start a cultivation')
+    parser_start_cultivation = subparsers.add_parser('start_script', help='start a script (like a cultivation)')
     parser_start_cultivation.add_argument('--file', help='name of the lua script (stored on Shrooly) to start', required=True)
-    subparsers.add_parser('stop_cultivation', help='stop cultivation')
-    subparsers.add_parser('logger', help='logging')
-    parser_status = subparsers.add_parser('status', help='get status of Shrooly')
-    parser_status.add_argument('--format', choices=["JSON", "PARSED"], help='output format', default="PARSED", required=False)
-
+    subparsers.add_parser('stop_script', help='stop a script (like a cultivation)')
+    subparsers.add_parser('set_current_time', help='set the current time')
+    parser_logger = subparsers.add_parser('logger', help='start the logging feature (dev)')
+    parser_logger.add_argument('--period', help='logger period in seconds')
+    subparsers.add_parser('status', help='get status of Shrooly')
     subparsers.add_parser('list_files', help='list files on Shrooly')
     subparsers.add_parser('disable_radios', help='disable Bluetooth and WiFi radios')
     
@@ -68,16 +96,33 @@ def main() -> None:
         shrooly_instance.disconnect(),
         sys.exit()
     ))
-    logger.info("Application has started!")
+    
+    logger.info("[CLI] Application has started!")
 
     shrooly_instance = shrooly(logger)
     
+    success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+    
+    if success == False:
+        logger.critical("[CLI] Error during connection, exiting..")
+        shrooly_instance.disconnect()
+        sys.exit()
+    
+    success, resp = shrooly_instance.updateStatus()
+        
+    if success:
+        logger.info("[CLI] Status updated")
+        if args.no_reset == False:
+            if compare_calver_versions(MIN_FW_VERSION, shrooly_instance.status['Boot-Firmware']['version']) <= 0:
+                logger.info("[CLI] Firmware version is higher than the required minimum")
+            else:
+                logger.error("[CLI] Firmware version is LOWER than the required minimum: " + MIN_FW_VERSION)
+        else:
+            logger.info("[CLI] no-reset flag is set, couldn't check if satisifies minimum fw version of: " + MIN_FW_VERSION)
+    else:
+        logger.error("[CLI] Error during status update command, continuing..")
+
     if args.subcommand == "list_files":
-        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        if success == False:
-            logger.critical("[CLI] Error during connection, exiting..")
-            shrooly_instance.disconnect()
-            sys.exit()
         success, files = shrooly_instance.list_files()
         if success is command_success.OK:
             logger.info("Found " + str(len(files)) + " file(s):")
@@ -86,11 +131,6 @@ def main() -> None:
         else:
             logger.error("Error during listing of files..")
     elif args.subcommand == "read_file":
-        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        if success == False:
-            logger.critical("[CLI] Error during connection, exiting..")
-            shrooly_instance.disconnect()
-            sys.exit()
         success, resp = shrooly_instance.read_file(args.file)
         if success is command_success.OK:
             logger.info("[CLI] File read success")
@@ -98,12 +138,6 @@ def main() -> None:
         else:
             logger.error("Error during reading of file, maybe it doesn't exist?")
     elif args.subcommand == "send_file":
-        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        
-        if success == False:
-            logger.critical("[CLI] Error during connection, exiting..")
-            shrooly_instance.disconnect()
-            sys.exit()
         success = shrooly_instance.send_file(args.file)
 
         if success == command_success.OK:
@@ -111,13 +145,6 @@ def main() -> None:
         else:
             logger.error("[CLI] Error during file transfer, exiting..")
     elif args.subcommand == "delete_file":
-        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        
-        if success == False:
-            logger.critical("[CLI] Error during connection, exiting..")
-            shrooly_instance.disconnect()
-            sys.exit()
-        
         resp = shrooly_instance.delete_file(args.file)
         
         if resp == command_success.OK:
@@ -125,88 +152,110 @@ def main() -> None:
         else:
             logger.error("[CLI] Error during file delete (maybe it doesn't exist on Shrooly?), exiting..")
     elif args.subcommand == "save_file":
-        logger.critical("subcommand not implemented, exiting")
+        success, resp = shrooly_instance.read_file(args.file)
+        if success is command_success.OK:
+            logger.info("[CLI] File save success")
+            with open(args.file, "w") as file:
+                file.write(resp)
+        else:
+            logger.error("Error during reading of file, maybe it doesn't exist?")
     elif args.subcommand == "status":
-        success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
-        
-        if success == False:
-            logger.critical("[CLI] Error during connection, exiting..")
-            shrooly_instance.disconnect()
-            sys.exit()
-        
-        success, resp = shrooly_instance.updateStatus(args.format)
-        
-        if success:
-            logger.info("Status updated")
-            json_converted = json.dumps(shrooly.status, indent=4)
-            print(json_converted)
-        #yaml_out = yaml.dump(shrooly_instance.status)
-        #print(yaml_out)
+        json_converted = json.dumps(shrooly.status, indent=4)
+        print(json_converted)
     elif args.subcommand == "logger":
-        logger.critical("subcommand not implemented, exiting")
-        # shrooly_instance.turn_on_humidifer()
-        # shrooly_instance.waitForCommandCompletion()
-        # timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        # csv_file = "log-" + timestamp + ".csv"
-        # field_names = ['Timestamp', 'Temperature', 'Humidity', 'VBUS', 'Fan duty', 'Fan speed', 'Humidiifer', 'Water level']
+        period = 10
+        if args.period is not None and isinstance(args.period, int):
+            period = args.period
+        #shrooly_instance.turn_on_humidifer()
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        csv_file = "log-" + timestamp + ".csv"
+        field_names = ['Timestamp', 'Temperature', 'Humidity', 'VBUS', 'Fan duty', 'Fan speed', 'Humidiifer', 'Water level']
 
-        # # Create the CSV file and write the header
-        # with open(csv_file, mode='w', newline='') as file:
-        #     writer = csv.DictWriter(file, fieldnames=field_names)
-        #     writer.writeheader()
+        first_line = ",".join(field_names)
+        logger.info(first_line)
+        # Create the CSV file and write the header
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=field_names)
+            writer.writeheader()
 
-        # # Infinite loop to append a line every second
-        # while True:
-        #     try:
-        #         # Open the CSV file in append mode
-        #         with open(csv_file, mode='a', newline='') as file:
-        #             writer = csv.DictWriter(file, fieldnames=field_names)
+        # Infinite loop to append a line every second
+        while True:
+            try:
+                with open(csv_file, mode='a', newline='') as file:
+                    writer = csv.DictWriter(file, fieldnames=field_names)
                     
-        #             # Get the current timestamp
-        #             timestamp = datetime.now().isoformat()
+                    # Get the current timestamp
+                    timestamp = datetime.now().isoformat()
 
-        #             # Generate some example data (you can replace this with your own data)
-        #             resp = shrooly_instance.getStatus("JSON")
-        #             print(type(resp))
-        #             print(resp)
-        #             resp = json.loads(resp)
-        #             print(resp)
-                                        
-        #             # Write a new row to the CSV file
-        #             writer.writerow(
-        #                 {
-        #                     'Timestamp': timestamp, 
-        #                     'Temperature': resp["Monitoring"]["Temperature"],
-        #                     'Humidity': resp["Monitoring"]["Humidity"],
-        #                     'VBUS': resp["Debug"]["VBUS"],
-        #                     'Fan duty': resp["Debug"]["Fan duty"],
-        #                     'Fan speed': resp["Debug"]["Fan speed"],
-        #                     'Humidiifer': resp["Debug"]["Humidifier"],
-        #                     'Water level': resp["Monitoring"]["Water level"],
-        #                     })
+                    success, response = shrooly_instance.updateStatus()
+                    
+                    if success == command_success.OK:         
+                        writer.writerow(
+                            {
+                                'Timestamp': timestamp, 
+                                'Temperature': response["Environment"]["Temperature"],
+                                'Humidity': response["Environment"]["Humidity"],
+                                'Fan duty': response["Environment"]["Fan_duty"],
+                                'Fan speed': response["Environment"]["Fan_speed"],
+                                'Humidiifer': response["Environment"]["Humidifier"],
+                                'Water level': response["Environment"]["Water_level"],
+                                })
+                        logger.info(f"{timestamp}, {response['Environment']['Temperature']}, {response['Environment']['Humidity']}, {response['Environment']['Fan_duty']}, {response['Environment']['Fan_speed']}, {response['Environment']['Humidifier']}, {response['Environment']['Water_level']}")
+                    else:
+                        logger.error("Error during update! Couldn't write CSV")
                 
-        #         # Wait for 10 second before appending the next line
-        #         time.sleep(10)
-        #     except Exception as e:
-        #         pass
-        #     except KeyboardInterrupt:
-        #         shrooly_instance.waitForCommandCompletion()
-        #         shrooly_instance.disconnect()
-        #         print("Program terminated.")
-        #         break
-    elif args.subcommand == "disable_radios":
-        logger.critical("subcommand not implemented, exiting")
-    elif args.subcommand == "start_cultivation":
-        logger.critical("subcommand not implemented, exiting")
-        # shrooly_instance.start_cultivation(args.file)
-        # shrooly_instance.waitForCommandCompletion()
-        # time.sleep(5)
-        # resp = shrooly_instance.getStatus()
-    elif args.subcommand == "stop_cultivation":
-        logger.critical("subcommand not implemented, exiting")
-        # shrooly_instance.stop_cultivation()
-        # shrooly_instance.waitForCommandCompletion()
-        # resp = shrooly_instance.getStatus()
+                time.sleep(period)
+            except Exception as e:
+                logger.error("Error: " + str(e))
+            except KeyboardInterrupt:
+                shrooly_instance.disconnect()
+                logger.info("Program terminated.")
+                break
+    elif args.subcommand == "disable_bt":
+        success = shrooly_instance.disable_bt()
+
+        if success == command_success.OK:
+            logger.info("[CLI] Bluetooth disable success")
+        else:
+            logger.error("[CLI] Error during bluetooth disable, exiting..")
+    elif args.subcommand == "set_current_time":
+        current_time = datetime.now()
+        formatted_time = current_time.strftime("%Y-%m-%dT%H:%M:%S")
+        request_success = shrooly_instance.set_datetime(formatted_time)
+        check_success = shrooly_instance.updateStatus()
+        if request_success and check_success:
+            logger.info("[CLI] Time read from device: " + shrooly_instance.status['System']['Datetime'])
+            time_from_device = datetime.fromisoformat(shrooly_instance.status['System']['Datetime'])
+            if abs((time_from_device-current_time).total_seconds()) < 5:
+                logger.info("[CLI] Time setting OK!")
+            else:
+                logger.error("[CLI] The read time doesn't match the sent one")
+        else:
+            logger.error("[CLI] Error during time update")
+    elif args.subcommand == "start_script":
+        success = shrooly_instance.start_script(args.file)
+
+        if success == command_success.OK:
+            logger.info("[CLI] Script start success!")
+        else:
+            logger.error("[CLI] Error during script start, exiting..")
+
+        success = shrooly_instance.updateStatus()
+
+        if success:
+            print(json.dumps(shrooly_instance.status['Program status'], indent=4))
+    elif args.subcommand == "stop_script":
+        success = shrooly_instance.stop_script()
+
+        if success == command_success.OK:
+            logger.info("[CLI] Script stop success!")
+        else:
+            logger.error("[CLI] Error during script stop, exiting..")
+
+        success = shrooly_instance.updateStatus()
+
+        if success:
+            print(json.dumps(shrooly_instance.status['Program status'], indent=4))
     else:
         logger.warning("No command has been specified, disconnecting and exiting.")
 

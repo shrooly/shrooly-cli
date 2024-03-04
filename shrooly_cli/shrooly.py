@@ -47,17 +47,17 @@ class shrooly:
         self.terminal_handler_inst = terminal_handler(self.serial_handler_instance)
 
     def kill(self):
-        self.logger.debug("[CLI] Kill has been called, stopping all threads and subprocesses")
+        self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")
         self.serial_handler_instance.kill()
         sys.exit()
 
     def connect(self, port=None, baud=921600, no_reset=False):
         if port is None:
-            self.logger.info("[CLI] Serial port is not specified, autoselecting it..")
+            self.logger.info("[SHROOLY] Serial port is not specified, autoselecting it..")
             port = self.autoselect_serial()
         
         if port == "":
-            self.logger.critical("[CLI] No serial devices found, exiting..")
+            self.logger.critical("[SHROOLY] No serial devices found, exiting..")
             sys.exit()
         
         if no_reset == False:
@@ -65,42 +65,42 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("fw_version", "I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("hw_revision", "I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
 
-        self.logger.info("[CLI] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
+        self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
         
         if self.connected == False:
-            #self.logger.critical("[CLI] Error during connecting")
+            #self.logger.critical("[SHROOLY] Error during connecting")
             return False
         
         boot_started_time = time.time()
         
         if no_reset == False:
-            self.logger.info("[CLI] Waiting for boot to finish..")
+            self.logger.info("[SHROOLY] Waiting for boot to finish..")
             boot_tries = 0
             boot_tries_limit = 100
             while True:
                 if self.boot_successful == True:
                     boot_finish_time = time.time()
-                    self.logger.info("[CLI] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + " s")
+                    self.logger.info("[SHROOLY] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + " s")
                     break
                 time.sleep(0.1)
                 boot_tries+=1
                 if boot_tries == boot_tries_limit:
-                    self.logger.critical("[CLI] Couldn't finish boot in 10 seconds, exiting..")
+                    self.logger.critical("[SHROOLY] Couldn't finish boot in 10 seconds, exiting..")
                     self.kill()
             
         time.sleep(1)
             
-        self.logger.info("[CLI] Sending CTRL+C to Shrooly to enter interactive mode")
+        self.logger.info("[SHROOLY] Sending CTRL+C to Shrooly to enter interactive mode")
 
         self.serial_handler_instance.direct_write('\x03')
         time.sleep(0.1)
-        self.logger.debug("[CLI] Sending CRLF")
+        self.logger.debug("[SHROOLY] Sending CRLF")
 
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput='\r\n', name="login_prompt")
         
         if resp_status:
-            self.logger.info("[CLI] Successfully entered interactive mode")
+            self.logger.info("[SHROOLY] Successfully entered interactive mode")
             self.login_successful = True
             return True
         else:
@@ -143,46 +143,46 @@ class shrooly:
     
     def callback_fw_version(self, status, payload):
         if status == serial_callback_status.OK:
-            self.logger.info("[CLI] FW Version: " + payload[0])
+            self.logger.info("[SHROOLY] FW Version: " + payload[0])
             json_line = {}
-            json_line['Firmware'] = {'version': payload[0],'build_date': payload[1]}
+            json_line['Boot-Firmware'] = {'version': payload[0],'build_date': payload[1]}
             self.status.update(json_line)
         else:
-            self.logger.error("[CLI] Error while getting fw-version, got: " + str(payload))
+            self.logger.error("[SHROOLY] Error while getting fw-version, got: " + str(payload))
 
     def callback_hw_version(self, status, payload):
         if status == serial_callback_status.OK and len(payload) == 2:
-            self.logger.info("[CLI] HW Version: " + payload[0] + " (" + payload[1] + ")")
+            self.logger.info("[SHROOLY] HW Version: " + payload[0] + " (" + payload[1] + ")")
             
             json_line = {}
-            json_line['Hardware'] = {'version': payload[1], 'hwcfg':payload[0]}
+            json_line['Boot-Hardware'] = {'version': payload[1], 'hwcfg':payload[0]}
             self.status.update(json_line)
         else:
-            self.logger.error("[CLI] Error while getting hw-version, got: " + str(payload))
+            self.logger.error("[SHROOLY] Error while getting hw-version, got: " + str(payload))
 
     def callback_compile_time(self, status, payload):
         if status == serial_callback_status.OK:
-            self.logger.info("[CLI] Compile time: " + payload[0])
+            self.logger.info("[SHROOLY] Compile time: " + payload[0])
             self.status['compile_time'] = payload
         else:
-            self.logger.error("[CLI] Error while getting compile time, got: " + str(payload))
+            self.logger.error("[SHROOLY] Error while getting compile time, got: " + str(payload))
     
     def callback_boot(self, status, payload):
         if status == serial_callback_status.OK:
             self.boot_successful = True
         else:
-            self.logger.error("[CLI] Error while looking for boot, got: " + str(payload))
+            self.logger.error("[SHROOLY] Error while looking for boot, got: " + str(payload))
         # TBD: kivételkezelés a status-ra
 
     def list_files(self):
-        self.logger.info("[CLI] Requesting list of files..")
+        self.logger.info("[SHROOLY] Requesting list of files..")
         request_string = f"fs list"
         
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="fs_list_prompt")
-        self.logger.debug("[CLI] Response status:" + str(resp_status))
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:
-            self.logger.error("[CLI] Error during request: " + str(resp_status))
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             # TBD: handle other types of errors
             return command_success.ERROR, ""
         
@@ -199,14 +199,14 @@ class shrooly:
 
         return command_success.OK, files
 
-    def updateStatus(self, format="PARSED"):
-        self.logger.info("[CLI] Requesting status of device..")
+    def updateStatus(self):
+        self.logger.info("[SHROOLY] Requesting status of device..")
         request_string = f"status"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="status_prompt")
-        self.logger.debug("[CLI] Response status:" + str(resp_status))
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
         
         if resp_status is not serial_callback_status.OK:
-            self.logger.error("[CLI] Error during request: " + str(resp_status))
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
 
         yaml_body = resp_payload[resp_payload.find("\r\n")+2:]        
@@ -240,35 +240,40 @@ class shrooly:
         return command_success.OK, json_resp
     
     def read_file(self, strInput):
-        self.logger.info("Requesting read of file: " + strInput)
+        self.logger.info("[SHROOLY] Requesting read of file: " + strInput)
         request_string = f"fs read --file {strInput} --format ASCII"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="fs_read_prompt")
         
         if resp_status is not serial_callback_status.OK:
-            self.logger.error("[CLI] Error during request: " + str(resp_status))
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
+        #print(resp_payload.encode().hex())
         
+        if resp_payload.endswith('\r\n'):
+            resp_payload = resp_payload[:-2]
+            #print(resp_payload.encode().hex())
+
         payload_body = resp_payload.split('\r\n')
         if payload_body[1].startswith("status: file does not exist"):
             return command_success.ERROR, ""
         
         resp_payload = resp_payload.split("data: ")[1]
-
+        #print(resp_payload)
         return command_success.OK, resp_payload
 
     def send_file(self, file_name):
-        self.logger.info("[CLI] File transfer process has started!")
+        self.logger.info("[SHROOLY] File transfer process has started!")
         file_path = Path(file_name).name
-        self.logger.debug("[CLI] File name from path: " + file_path)
+        self.logger.debug("[SHROOLY] File name from path: " + file_path)
         
         if os.path.exists(file_path) is False:
-            self.logger.error("[CLI] Requested file doesn't exist on client device, exiting..")
+            self.logger.error("[SHROOLY] Requested file doesn't exist on client device, exiting..")
             return command_success.ERROR
         
         file_content = ""
         file_size = os.path.getsize(file_path)
         
-        self.logger.info("[CLI] File to send: " + file_name + ", size: " + str(file_size) + " byte(s)")
+        self.logger.info("[SHROOLY] File to send: " + file_name + ", size: " + str(file_size) + " byte(s)")
         
         request_string = f"fs delete {file_name}"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="fs_delete_prompt")
@@ -276,19 +281,19 @@ class shrooly:
         if resp_status is serial_callback_status.OK:
             response_split = resp_payload.split('\r\n')
             if response_split[1].startswith("status: ok"):
-                self.logger.info("[CLI] File already existed on Shrooly, deleted it.")
+                self.logger.info("[SHROOLY] File already existed on Shrooly, deleted it.")
             else:
-                self.logger.info("[CLI] File doesn't exist on Shrooly.")
+                self.logger.info("[SHROOLY] File doesn't exist on Shrooly.")
 
         else:
-            self.logger.error("[CLI] Error while trying to delete file")
+            self.logger.error("[SHROOLY] Error while trying to delete file")
         
         try:
             with open(file_name, 'r') as file:
                 file_content = file.read()
-            self.logger.info("[CLI] File successfully opened on client")
+            self.logger.info("[SHROOLY] File successfully opened on client")
         except:
-            self.logger.error("[CLI] Error while opening file, maybe it doesn't extist?")
+            self.logger.error("[SHROOLY] Error while opening file, maybe it doesn't extist?")
             return command_success.ERROR
 
         #self.logger.debug("File content: ")
@@ -309,7 +314,7 @@ class shrooly:
         
         while chunk_counter < len(chunks):
             element = chunks[chunk_counter]
-            self.logger.info("[CLI] Sending chunk: " + str(chunk_counter) + "/" + str(len(chunks)-1))
+            self.logger.info("[SHROOLY] Sending chunk: " + str(chunk_counter) + "/" + str(len(chunks)-1))
 
             hex_bytes = bytes.fromhex(element)
 
@@ -326,43 +331,43 @@ class shrooly:
             #print(resp_payload)
 
             if resp_status is serial_callback_status.OK:
-                #self.logger.info("[CLI] Chunk successfully transferred")
+                #self.logger.info("[SHROOLY] Chunk successfully transferred")
                 response_split = resp_payload.split('\r\n')
                 #print(response_split)
                 # print(response_split[2])
                 transfer_status = response_split[2]
                 
                 if transfer_status == "status: ok":
-                    self.logger.debug("[CLI] Transfer and CRC are OK, getting next chunk!")
+                    self.logger.debug("[SHROOLY] Transfer and CRC are OK, getting next chunk!")
                     chunk_counter += 1
                 else:
-                    self.logger.error("[CLI] Transfer was OK, but chunk wasn't accepted, retrying with same chunk.")
+                    self.logger.error("[SHROOLY] Transfer was OK, but chunk wasn't accepted, retrying with same chunk.")
                     retries+= 1
             elif resp_status is serial_callback_status.ERROR:
-                self.logger.error("[CLI] Error during transmission, exiting.")
+                self.logger.error("[SHROOLY] Error during transmission, exiting.")
                 return command_success.ERROR
             elif resp_status is serial_callback_status.TIMEOUT:
-                self.logger.error("[CLI] Timeout during transmission, NOT getting next chunk! Retry..")
+                self.logger.error("[SHROOLY] Timeout during transmission, NOT getting next chunk! Retry..")
                 retries+= 1
             
             if retries > 5:
-                self.logger.error("[CLI] Too many retries during sending of file. Exiting..")
+                self.logger.error("[SHROOLY] Too many retries during sending of file. Exiting..")
                 break
 
-        #self.logger.info("[CLI] File transfer has finished!")
+        #self.logger.info("[SHROOLY] File transfer has finished!")
         end_time = time.time()
-        self.logger.info("[CLI] File transfer time: " + "{:.2f}".format((end_time-start_time)) + " s, speed: " + "{:.2f}".format(file_size/(end_time-start_time)) + " bytes/second" )
+        self.logger.info("[SHROOLY] File transfer time: " + "{:.2f}".format((end_time-start_time)) + " s, speed: " + "{:.2f}".format(file_size/(end_time-start_time)) + " bytes/second" )
         return command_success.OK
 
     def delete_file(self, strInput):
-        self.logger.info(f"[CLI] Requesting deletion of file: {strInput}")
+        self.logger.info(f"[SHROOLY] Requesting deletion of file: {strInput}")
         request_string = f"fs delete {strInput}"
         
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="fs_delete_prompt")
-        self.logger.debug("[CLI] Response status:" + str(resp_status))
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:
-            self.logger.error("[CLI] Error during request: " + str(resp_status))
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             # TBD: handle other types of errors
             return command_success.ERROR
 
@@ -372,17 +377,58 @@ class shrooly:
         
         return command_success.OK
     
-    def save_file(self, strInput):
-        pass
+    def set_datetime(self, timeInput):
+        self.logger.info(f"[SHROOLY] Trying to set datetime to: {timeInput}")
+        request_string = f"datetime set {timeInput}"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_datetime_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-    def start_cultivation(self, strInput):
-        pass
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
 
-    def stop_cultivation(self):
-        pass
 
-    def disable_radios(self):
-        pass
+    def start_script(self, strInput):
+        self.logger.info(f"[SHROOLY] Requesting start of script: {strInput}")
+        request_string = f"lua start {strInput}"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="start_script_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
+
+    def stop_script(self):
+        self.logger.info(f"[SHROOLY] Requesting stop of running script")
+        request_string = f"lua stop"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="stop_script_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
+
+    def disable_bt(self):
+        self.logger.info(f"[SHROOLY] Requesting disabling of bt interface")
+        request_string = f"bt disable"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="stop_script_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
 
     def parse_json(self, json_obj, path=''):
         if isinstance(json_obj, dict):
