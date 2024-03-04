@@ -8,6 +8,7 @@ setup(
     author_email='developer@shrooly.com',
     packages=find_packages(),
     install_requires=[
+        'serial',
         'colorlog'
     ],
 )
