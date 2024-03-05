@@ -67,7 +67,7 @@ class serial_handler:
             self.ser.setDTR(HIGH)
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Couldn't connect to serial at " + port + ", baud: " + str(baud) + ". Exception: " + str(e))
-            self.kill()
+            self.disconnect()
             return False
 
         if(no_reset==False):
@@ -84,21 +84,22 @@ class serial_handler:
         return True
 
     def disconnect(self):
-        self.logger.info("[SERIAL_HANDLER] Serial disconnect has been called")
-        self.kill()
-
-    def kill(self):
-        self.logger.debug("[SERIAL_HANDLER] Kill has been called, stopping all threads")
-        
+        self.logger.debug("[SERIAL_HANDLER] Serial disconnect has been called")
+        self.logger.debug("[SERIAL_HANDLER] Stopping serial read thread")
+        self.exit_signal = True    
         # Calling every outstanding serial trigger with status.ERROR, empty payload
+        self.logger.debug("[SERIAL_HANDLER] Calling single use, still active triggers..")
         for serial_trigger_instance in self.serial_trigger_array:
             
             if serial_trigger_instance.single_use is True:
                 serial_trigger_instance.callback(serial_callback_status.ERROR, "")
                 serial_trigger_instance.active = False
 
+        
         self.serial_trigger_array = []
-        self.exit_signal = True
+        
+        self.ser.close()
+        self.logger.info("[SERIAL_HANDLER] Serial disconnected!")
 
     def add_serial_trigger(self, trigger_name, regex_trigger, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=10):
         serial_trigger_instance = serial_trigger(trigger_name, regex_trigger, callback, single_use, response_type, response_timeout)
@@ -108,11 +109,11 @@ class serial_handler:
     def handle_read_serial_port(self):
         if not self.ser.is_open: # exit if serial port is not open
             self.logger.critical("[SERIAL_HANDLER] Serial port is not open while attempting to read, exiting..")
-            self.kill()
+            self.disconnect()
 
         last_check_time = 0
         while True: # infinite loop for handling reads
-            if self.exit_signal: # if the external exit_signal is raised, kill the loop
+            if self.exit_signal: # if the external exit_signal is raised, break the loop
                 self.logger.debug("[SERIAL_HANDLER] Exiting serial read loop")
                 break
             
@@ -133,7 +134,7 @@ class serial_handler:
                 serial_cache = self.ser.read_all()
             except Exception as e:
                 self.logger.critical("[SERIAL_HANDLER] Serial read error: " + str(e))
-                self.kill()
+                self.disconnect()
                 continue
 
             serial_cache = serial_cache.decode("utf-8", "ignore")
@@ -189,7 +190,7 @@ class serial_handler:
             self.ser.write(data_to_send)
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Error while writing to serial port: " + str(e)) 
-            self.kill()
+            self.disconnect()
         
         strInput_hex = self.get_hex_string(strInput)
         strInput_beatufied = self.get_beautified_string(strInput)

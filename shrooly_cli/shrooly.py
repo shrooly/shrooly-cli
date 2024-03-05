@@ -7,6 +7,7 @@ import binascii
 from pathlib import Path # for opening and saving files
 from enum import Enum
 from serial.tools import list_ports
+from datetime import datetime # getting current time for logging
 from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
 from .logger_switcher import logger_switcher
 from .terminal_handler import terminal_handler
@@ -25,7 +26,6 @@ class shrooly_file:
 
     def __repr__(self):
         return f"filename: \"{self.name}\", size: {self.size} byte(s), last_modified: {self.last_modified}"
-    
 
 class shrooly:
     status = {}
@@ -48,12 +48,12 @@ class shrooly:
 
     def kill(self):
         self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")
-        self.serial_handler_instance.kill()
+        self.serial_handler_instance.disconnect()
         sys.exit()
 
     def connect(self, port=None, baud=921600, no_reset=False):
         if port is None:
-            self.logger.info("[SHROOLY] Serial port is not specified, autoselecting it..")
+            self.logger.debug("[SHROOLY] Serial port is not specified, autoselecting it..")
             port = self.autoselect_serial()
         
         if port == "":
@@ -248,6 +248,7 @@ class shrooly:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
         #print(resp_payload.encode().hex())
+
         
         if resp_payload.endswith('\r\n'):
             resp_payload = resp_payload[:-2]
@@ -280,10 +281,10 @@ class shrooly:
 
         if resp_status is serial_callback_status.OK:
             response_split = resp_payload.split('\r\n')
-            if response_split[1].startswith("status: ok"):
-                self.logger.info("[SHROOLY] File already existed on Shrooly, deleted it.")
-            else:
+            if response_split[1].startswith("error while deleting file"):
                 self.logger.info("[SHROOLY] File doesn't exist on Shrooly.")
+            else:
+                self.logger.info("[SHROOLY] File already existed on Shrooly, deleted it.")
 
         else:
             self.logger.error("[SHROOLY] Error while trying to delete file")
@@ -296,21 +297,15 @@ class shrooly:
             self.logger.error("[SHROOLY] Error while opening file, maybe it doesn't extist?")
             return command_success.ERROR
 
-        #self.logger.debug("File content: ")
-        #self.logger.debug(file_content)
-
-        #target_file_name = file_name
         max_line_length = 192
         #fs read --file testfile.lua --format ASCII
         
         chunks = string_to_comand_chunks(42+len(file_name), file_content, max_line_length)
 
-        chunk_counter = 0
-        # TBD: count retries
-        #self.logger.info("Command: fs append, target: " + target_file_name + ", chunk size: " + str(max_line_length) + " bytes, no. of chunks: " + str(len(chunks)))
-        
-        start_time = time.time()
         retries = 0
+        
+        chunk_counter = 0        
+        start_time = time.time()
         
         while chunk_counter < len(chunks):
             element = chunks[chunk_counter]
@@ -333,11 +328,11 @@ class shrooly:
             if resp_status is serial_callback_status.OK:
                 #self.logger.info("[SHROOLY] Chunk successfully transferred")
                 response_split = resp_payload.split('\r\n')
-                #print(response_split)
+                print(response_split)
                 # print(response_split[2])
                 transfer_status = response_split[2]
                 
-                if transfer_status == "status: ok":
+                if "status: ok" in response_split:
                     self.logger.debug("[SHROOLY] Transfer and CRC are OK, getting next chunk!")
                     chunk_counter += 1
                 else:
@@ -353,6 +348,8 @@ class shrooly:
             if retries > 5:
                 self.logger.error("[SHROOLY] Too many retries during sending of file. Exiting..")
                 break
+
+            #time.sleep(2)
 
         #self.logger.info("[SHROOLY] File transfer has finished!")
         end_time = time.time()
@@ -389,7 +386,28 @@ class shrooly:
             return command_success.ERROR
         
         return command_success.OK
+    
+    def get_datetime(self):
+        self.logger.info(f"[SHROOLY] Trying to get datetime..")
+        request_string = f"datetime get"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="get_datetime_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR, ""
+        
+        payload_split = resp_payload.split('\r\n')
+
+        regex_match = re.search("(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", payload_split[1])
+        if regex_match == False:
+            return command_success.ERROR, ""
+        
+        payload = regex_match.groups()[0]
+        time_from_device = datetime.fromisoformat(payload)
+
+        return command_success.OK, time_from_device
 
     def start_script(self, strInput):
         self.logger.info(f"[SHROOLY] Requesting start of script: {strInput}")
@@ -421,7 +439,7 @@ class shrooly:
         self.logger.info(f"[SHROOLY] Requesting disabling of bt interface")
         request_string = f"bt disable"
         
-        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="stop_script_prompt")
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="bt_disable_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:
