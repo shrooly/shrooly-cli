@@ -2,8 +2,12 @@
 LOW = True
 HIGH = False
 
+# RESET settings
 MINIMAL_EN_LOW_DELAY = 0.005
 
-PROMPT_REGEX = "[a-zA-Z0-9-]+:~\$.\r\n"
+# Regexs
+PROMPT_REGEX = "[a-zA-Z0-9-]+:~\$."
 
+# Versions
 MIN_FW_VERSION = "v2024.09-01"
+CLI_VERSION = "v1.0"

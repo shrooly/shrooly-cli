@@ -1,6 +1,7 @@
 import sys # used for detecting host OS
 import argparse # argument parsing
 import json
+import time
 import logging # logging
 import signal # for handling Ctrl-C exit preoperly
 from colorlog import ColoredFormatter
@@ -9,7 +10,8 @@ from datetime import datetime # getting current time for logging
 # local dependencies
 from .shrooly import shrooly, command_success
 from .constants import MIN_FW_VERSION
-from .logger import log_to_file
+from .log_to_file import log_to_file
+from .logging_handler import logging_level
 
 def compare_calver_versions(version1, version2):
     """
@@ -95,6 +97,8 @@ def main() -> None:
     parser.add_argument("--serial-baud", default=921600, help="set the Shrooly's serial-port baud")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING"], default="INFO", help="Set the logging level (DEBUG, INFO, WARNING)")
     parser.add_argument("--no-reset", action='store_true', help="Disable reset on connection")
+    parser.add_argument("--serial-log", help="External logging to textfile")
+    parser.add_argument("--no-fw-check", action='store_true', help="Disable fw version checking")
 
     args = parser.parse_args()
 
@@ -108,28 +112,30 @@ def main() -> None:
     
     logger.info("[CLI] Application has started!")
 
-    shrooly_instance = shrooly(logger)
+    shrooly_instance = shrooly(ext_logger=logger, serial_log=args.serial_log)
     
     success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+    time.sleep(1)
     
     if success == False:
         logger.critical("[CLI] Error during connection, exiting..")
         shrooly_instance.disconnect()
         sys.exit()
     
-    success, resp = shrooly_instance.updateStatus()
-        
-    if success:
-        logger.info("[CLI] Status updated")
-        if args.no_reset == False:
-            if compare_calver_versions(MIN_FW_VERSION, shrooly_instance.status['Boot-Firmware']['version']) <= 0:
-                logger.info("[CLI] Firmware version is higher than the required minimum")
+    if args.no_fw_check is None:
+        success, resp = shrooly_instance.updateStatus()
+            
+        if success:
+            logger.info("[CLI] Status updated")
+            if args.no_reset == False:
+                if compare_calver_versions(MIN_FW_VERSION, shrooly_instance.status['Boot-Firmware']['version']) <= 0:
+                    logger.info("[CLI] Firmware version is higher than the required minimum")
+                else:
+                    logger.error("[CLI] Firmware version is LOWER than the required minimum: " + MIN_FW_VERSION)
             else:
-                logger.error("[CLI] Firmware version is LOWER than the required minimum: " + MIN_FW_VERSION)
+                logger.info("[CLI] no-reset flag is set, couldn't check if device satisifies minimum fw version of: " + MIN_FW_VERSION)
         else:
-            logger.info("[CLI] no-reset flag is set, couldn't check if device satisifies minimum fw version of: " + MIN_FW_VERSION)
-    else:
-        logger.error("[CLI] Error during status update command, continuing..")
+            logger.error("[CLI] Error during status update command, continuing..")
 
     if args.subcommand == "list_files":
         success, files = shrooly_instance.list_files()
@@ -191,6 +197,14 @@ def main() -> None:
             logger.error("Error during reading of file, maybe it doesn't exist?")
     
     elif args.subcommand == "status":
+        if args.no_fw_check is not None:
+            success, resp = shrooly_instance.updateStatus()
+                
+            if success:
+                logger.info("[CLI] Status updated")
+            else:
+                logger.error("[CLI] Error during status update command, continuing..")
+
         json_converted = json.dumps(shrooly.status, indent=4)
         print(json_converted)
     

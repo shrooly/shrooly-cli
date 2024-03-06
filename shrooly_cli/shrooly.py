@@ -9,10 +9,10 @@ from enum import Enum
 from serial.tools import list_ports
 from datetime import datetime # getting current time for logging
 from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
-from .logger_switcher import logger_switcher
+from .logging_handler import logging_handler, logging_level
 from .terminal_handler import terminal_handler
 from .fileconverter import string_to_comand_chunks
-from .constants import PROMPT_REGEX
+from .constants import PROMPT_REGEX, CLI_VERSION
 
 class command_success(Enum):
     OK = 0
@@ -35,19 +35,28 @@ class shrooly:
     communication_in_progress = False
     file_list = []
     terminal_handler_inst = None
+    version = CLI_VERSION
 
-    logger = logger_switcher() # TBD: meg kellene szüntetni a logger_switchert
+    logger = logging_handler()
 
-    def __init__(self, ext_logger=None):
-        if ext_logger != None:
-            self.logger.ext_log_pipe = ext_logger
-            self.logger.ext_log_pipe.setLevel(ext_logger.getEffectiveLevel())
+    def __init__(self, log_level=None, ext_logger=None, serial_log=None):
+        self.logger.ext_log_pipe = ext_logger
         
-        self.serial_handler_instance = serial_handler(ext_logger)
+        if log_level is not None:
+            self.logger.setLevel(log_level)
+        else:
+            self.logger.setLevel(ext_logger.getEffectiveLevel())
+        
+        self.serial_handler_instance = serial_handler(ext_logger, serial_log)
         self.terminal_handler_inst = terminal_handler(self.serial_handler_instance)
 
     def kill(self):
         self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")
+        self.serial_handler_instance.disconnect()
+        sys.exit()
+
+    def serialExceptionCallback(self):
+        self.logger.critical("[SHROOLY] Unexpected error on serial_handler, exiting")
         self.serial_handler_instance.disconnect()
         sys.exit()
 
@@ -66,6 +75,7 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("hw_revision", "I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
 
         self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
+        self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
         self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
         
         if self.connected == False:
@@ -93,18 +103,33 @@ class shrooly:
             
         self.logger.info("[SHROOLY] Sending CTRL+C to Shrooly to enter interactive mode")
 
-        self.serial_handler_instance.direct_write('\x03')
+        success = self.serial_handler_instance.direct_write('\x03')
+        
+        if success == False:
+            self.logger.error("[SHROOLY] Error while sending CTRL+C, exiting..")
+            self.disconnect()
+            return False
+
         time.sleep(0.1)
         self.logger.debug("[SHROOLY] Sending CRLF")
 
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput='\r\n', name="login_prompt")
         
-        if resp_status:
+        if resp_status == serial_callback_status.OK:
             self.logger.info("[SHROOLY] Successfully entered interactive mode")
             self.login_successful = True
             return True
+        elif resp_status == serial_callback_status.TIMEOUT:
+            self.logger.error("[SHROOLY] Timeout during entering interactive mode, exiting..")
+            self.disconnect()
+            return False
+        elif resp_status == serial_callback_status.ERROR:
+            self.logger.error("[SHROOLY] Error during entering interactive mode, exiting..")
+            self.disconnect()
+            return False
         else:
-            self.serial_handler_instance.disconnect()
+            self.logger.critical("[SHROOLY] Unknown during entering interactive mode, exiting..")
+            self.disconnect()
             return False
     
     def disconnect(self):
@@ -328,7 +353,7 @@ class shrooly:
             if resp_status is serial_callback_status.OK:
                 #self.logger.info("[SHROOLY] Chunk successfully transferred")
                 response_split = resp_payload.split('\r\n')
-                print(response_split)
+                # print(response_split)
                 # print(response_split[2])
                 transfer_status = response_split[2]
                 
@@ -349,7 +374,7 @@ class shrooly:
                 self.logger.error("[SHROOLY] Too many retries during sending of file. Exiting..")
                 break
 
-            #time.sleep(2)
+            #time.sleep(10)
 
         #self.logger.info("[SHROOLY] File transfer has finished!")
         end_time = time.time()
