@@ -73,7 +73,9 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
             self.serial_handler_instance.add_serial_trigger("fw_version", r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("hw_revision", r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
-
+        
+        self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", lambda x, y: self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE)
+        
         self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
         self.connected = self.serial_handler_instance.connect(port, baud, no_reset)

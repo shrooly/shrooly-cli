@@ -199,8 +199,7 @@ def main() -> None:
     elif args.subcommand == "status":
         if args.no_fw_check is not None:
             success, resp = shrooly_instance.updateStatus()
-                
-            if success:
+            if success is command_success.OK:
                 logger.info("[CLI] Status updated")
             else:
                 logger.error("[CLI] Error during status update command, continuing..")
