@@ -6,7 +6,7 @@ HIGH = False
 MINIMAL_EN_LOW_DELAY = 0.005
 
 # Regexs
-PROMPT_REGEX = "[a-zA-Z0-9-]+:~\$."
+PROMPT_REGEX = r"[a-zA-Z0-9-]+:~\$.\r\n"
 
 # Versions
 MIN_FW_VERSION = "v2024.09-01"

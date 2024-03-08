@@ -161,22 +161,12 @@ class serial_handler:
                 continue
 
             serial_cache = serial_cache.decode("utf-8", "ignore")
-            
-            if self.serial_debug_mode:
-                file_hex = open("hex_stream.txt", mode='a', encoding='utf-8')
-            
+
             for serial_character in serial_cache:
                 self.serial_line_buffer = self.serial_line_buffer + str(serial_character)
                 
-                if self.serial_debug_mode:
-                    file_hex.write(format(ord(serial_character), '02x'))
-
-                if self.serial_debug_mode and serial_character == '\n':
-                    file_hex.write('\n')
-                
                 if(serial_character == '\n'):
-                    buffer_cleaned = self.remove_special_characters(self.serial_line_buffer)
-                    self.logger.debug("[SERIAL_HANDLER] processing line: " + buffer_cleaned)
+                    self.logger.debug("[SERIAL_HANDLER] processing line: " + self.remove_special_characters(self.serial_line_buffer))
                     
                     if self.serial_log is not None:
                         with open(self.serial_log, mode='a', encoding='utf-8') as file:
@@ -226,15 +216,8 @@ class serial_handler:
             return False
 
         self.ser.flushInput()
-        
         try:
             self.ser.write(data_to_send)
-            if self.serial_debug_mode:
-                with open("hex_stream.txt", mode='a', encoding='utf-8') as file:
-                    serial_cache_hex = " ".join(format(ord(char), '02x') for char in strInput)
-                    serial_cache_hex += '\n'
-                    file.write("OUTBOUND_HEX: " + serial_cache_hex)
-                    file.write("OUTBOUND: " + self.clean_ansi_escape_codes(strInput))
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Error while writing to serial port: " + str(e)) 
             self.raiseSerialExceptionCallback()

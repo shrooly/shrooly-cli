@@ -43,25 +43,19 @@ class terminal_handler:
         self.terminal_resp_payload = payload
         self.waiting_for_terminal_resp = False
     
-    def send_command(self, strInput, name="", timeout=5):
-        """
-        Sends a command to the terminal and waits for response.
-
-        Args:
-            strInput (str): The command to send to the terminal.
-            name (str): The name of the command (optional).
-            timeout (int): The timeout duration in seconds (default is 5).
-
-        Returns:
-            tuple: A tuple containing the status and payload of the terminal response.
-        """
+    def send_command(self, strInput, name="", timeout=5, no_trigger=False):
         if self.serial_handler_instance.status is not serial_interface_status.CONNECTED:
             return serial_callback_status.ERROR, ""
         
-        self.serial_handler_instance.add_serial_trigger(name, PROMPT_REGEX, self.terminal_command_callback, True, serial_trigger_response_type.BUFFER, timeout)
+        if no_trigger is False:
+            self.serial_handler_instance.add_serial_trigger(name, PROMPT_REGEX, self.terminal_command_callback, True, serial_trigger_response_type.BUFFER, timeout)
+        
         self.serial_handler_instance.direct_write(strInput+"\r\n")
         self.waiting_for_terminal_resp = True
 
+        if no_trigger is True:
+            return serial_callback_status.OK, ""
+        
         while True: 
             if self.waiting_for_terminal_resp is not True:
                 return self.terminal_resp_status, self.terminal_resp_payload
