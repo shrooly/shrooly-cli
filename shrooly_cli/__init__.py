@@ -1,1 +1,1 @@
-from .shrooly_cli import shrooly
+from .shrooly_cli import shrooly, command_success

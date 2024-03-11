@@ -52,8 +52,11 @@ class serial_handler:
     serial_log = None
     serialExceptionCallback = None
     
-    def __init__(self, ext_logger=None, serial_log=None):
-        self.ser = serial.Serial()
+    def __init__(self, log_level=None,ext_logger=None, serial_log=None):
+        self.ser = serial.Serial(
+            write_timeout = 1,
+            timeout = 1
+        )
         
         self.logger.ext_log_pipe = ext_logger
         self.serial_log = serial_log
@@ -67,6 +70,8 @@ class serial_handler:
         
         if ext_logger is not None: 
             self.logger.setLevel(ext_logger.getEffectiveLevel())
+        elif log_level is not None:
+            self.logger.setLevel(log_level)
 
     def raiseSerialExceptionCallback(self):
         self.logger.error("[SERIAL_HANDLER] Unexpected serial error, calling the exception callback..")
@@ -76,7 +81,7 @@ class serial_handler:
     def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
         try:
-            self.ser = serial.serial_for_url(port, baud, timeout=1, do_not_open=True, exclusive=True)
+            self.ser = serial.serial_for_url(port, baud, write_timeout=1, timeout=1, do_not_open=True, exclusive=True)
             self.ser.setRTS(LOW)
             self.ser.setDTR(LOW)
             
