@@ -54,7 +54,7 @@ class serial_handler:
     
     def __init__(self, log_level=None,ext_logger=None, serial_log=None):
         self.ser = serial.Serial(
-            write_timeout = 1,
+            write_timeout = 0,
             timeout = 1
         )
         

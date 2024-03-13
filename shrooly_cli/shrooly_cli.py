@@ -112,13 +112,26 @@ def main() -> None:
     
     logger.info("[CLI] Application has started!")
 
-    shrooly_instance = shrooly(ext_logger=logger, serial_log=args.serial_log)
+    shrooly_instance = shrooly(
+        ext_logger=logger, 
+        serial_log=args.serial_log)
     
-    success = shrooly_instance.connect(args.serial_port, args.serial_baud, args.no_reset)
+    success = shrooly_instance.connect(
+        args.serial_port, 
+        args.serial_baud, 
+        args.no_reset,
+        lambda x, y: logger.error(y[:-2]))
     time.sleep(1)
     
     if success == False:
         logger.critical("[CLI] Error during connection, exiting..")
+        shrooly_instance.disconnect()
+        sys.exit()
+        
+    success = shrooly_instance.enterTerminal(not args.no_reset)
+    
+    if success == False:
+        logger.critical("[CLI] Error during entering Terminal, exiting..")
         shrooly_instance.disconnect()
         sys.exit()
     

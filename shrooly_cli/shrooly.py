@@ -38,6 +38,7 @@ class shrooly:
     version = CLI_VERSION
 
     logger = logging_handler()
+    esp_reset_callback = None
 
     def __init__(self, log_level=None, ext_logger=None, serial_log=None):
         self.logger.ext_log_pipe = ext_logger
@@ -60,7 +61,8 @@ class shrooly:
         self.serial_handler_instance.disconnect()
         sys.exit()
 
-    def connect(self, port=None, baud=921600, no_reset=False):
+    def connect(self, port=None, baud=921600, no_reset=False, esp_reset_callback=None):
+        self.esp_reset_callback = esp_reset_callback
         if port is None:
             self.logger.debug("[SHROOLY] Serial port is not specified, autoselecting it..")
             port = self.autoselect_serial()
@@ -73,23 +75,31 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
             self.serial_handler_instance.add_serial_trigger("fw_version", r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("hw_revision", r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
-        
-        self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", lambda x, y: self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
-        
+            self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", lambda x, y: self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
+            
         self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
         self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
         
-        if self.connected == False:
-            #self.logger.critical("[SHROOLY] Error during connecting")
-            return False
+        return self.connected
+    
+    def enterTerminal(self, wait_for_reset=True):
+        if self.esp_reset_callback is not None:
+            self.serial_handler_instance.add_serial_trigger(
+                trigger_name="esp_reset_catcher", 
+                regex_trigger=r"rst:0x[0-9a-f]+ \(([A-Z_]+)\),boot:0x[0-9a-f]+ \(([A-Z_]+)\).*",
+                callback=self.esp_reset_callback, 
+                single_use=False, 
+                response_type=serial_trigger_response_type.LINE, 
+                response_timeout=0)
         
         boot_started_time = time.time()
         
-        if no_reset == False:
+        if wait_for_reset is True:
             self.logger.info("[SHROOLY] Waiting for boot to finish..")
             boot_tries = 0
             boot_tries_limit = 100
+            
             while True:
                 if self.boot_successful == True:
                     boot_finish_time = time.time()
