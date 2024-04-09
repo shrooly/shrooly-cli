@@ -1,3 +1,4 @@
+from calendar import c
 import time # pausing executing, formatting timestrings
 import yaml
 import re
@@ -421,6 +422,23 @@ class shrooly:
         request_string = f"datetime set {timeInput}"
         
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_datetime_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
+    
+    def set_humidifier(self, state):
+        if state is not 0 and state is not 1:
+            self.logger.error("[SHROOLY] Invalid state for humidifier, must be 0 or 1")
+            return command_success.ERROR
+        
+        self.logger.info(f"[SHROOLY] Trying to set humidifer to: {state}")
+        request_string = f"lua execute set_humidifier({state})"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_humidifer_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:
