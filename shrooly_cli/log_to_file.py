@@ -66,7 +66,7 @@ class log_to_file():
                                 'Humidiifer': response["Environment"]["Humidifier"],
                                 'Water level': response["Environment"]["Water_level"],
                                 })
-                        self.logger.info(f"[LOGGER] {timestamp}, {response['Environment']['Temperature']}, {response['Environment']['Humidity']}, {response["System"]["Input_voltage"]}, {response['Environment']['Fan_duty']}, {response['Environment']['Fan_speed']}, {response['Environment']['Humidifier']}, {response['Environment']['Water_level']}")
+                        self.logger.info(f"[LOGGER] {timestamp}, {response['Environment']['Temperature']}, {response['Environment']['Humidity']}, {response['System']['Input_voltage']}, {response['Environment']['Fan_duty']}, {response['Environment']['Fan_speed']}, {response['Environment']['Humidifier']}, {response['Environment']['Water_level']}")
                     else:
                         self.logger.error("[LOGGER] Error during update! Couldn't write CSV")
                 
