@@ -76,7 +76,9 @@ class shrooly:
             self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
             self.serial_handler_instance.add_serial_trigger("fw_version", r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("hw_revision", r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
-            self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", lambda x, y: self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
+            self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", 
+                                                            lambda x, y: 
+                                                                self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
             
         self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
@@ -86,6 +88,7 @@ class shrooly:
     
     def enterTerminal(self, wait_for_reset=True):
         if self.esp_reset_callback is not None:
+            time.sleep(0.5)
             self.serial_handler_instance.add_serial_trigger(
                 trigger_name="esp_reset_catcher", 
                 regex_trigger=r"rst:0x[0-9a-f]+ \(([A-Z_]+)\),boot:0x[0-9a-f]+ \(([A-Z_]+)\).*",
@@ -500,6 +503,19 @@ class shrooly:
         request_string = f"bt disable"
         
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="bt_disable_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR
+        
+        return command_success.OK
+    
+    def reset(self):
+        self.logger.info(f"[SHROOLY] Requesting reset of device")
+        request_string = f"reboot"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="reboot_prompt", no_trigger=True)
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:

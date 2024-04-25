@@ -93,6 +93,7 @@ def main() -> None:
     parser_logger.add_argument('--period', help='logger period in seconds')
     subparsers.add_parser('status', help='get status of Shrooly')
     subparsers.add_parser('list_files', help='list files on Shrooly')
+    subparsers.add_parser('reset', help='reset Shrooly')
     subparsers.add_parser('disable_bt', help='disable Bluetooth radio')
     
     parser.add_argument("--serial-port", help="set the Shrooly's serial-port")
@@ -312,6 +313,9 @@ def main() -> None:
 
         if success:
             print(json.dumps(shrooly_instance.status['Program status'], indent=4))
+    elif args.subcommand == "reset":
+        shrooly_instance.reset()
+        pass
     else:
         logger.warning("No command has been specified, disconnecting and exiting.")
     
