@@ -82,8 +82,8 @@ def main() -> None:
     parser_read_file.add_argument('--file', help='name of the file to open', required=True)
     parser_save_file = subparsers.add_parser('save_file', help='save a file')
     parser_save_file.add_argument('--file', help='name of the file to save', required=True)
-    parser_set_humidifer = subparsers.add_parser('set_humidifer', help='set the humidifer')
-    parser_set_humidifer.add_argument('--state', help='the state to set: on/off', choices=["ON", "OFF"], required=True)
+    parser_set_humidifier = subparsers.add_parser('set_humidifier', help='set the humidifier')
+    parser_set_humidifier.add_argument('--state', help='the state to set: on/off', choices=["ON", "OFF"], required=True)
     parser_start_cultivation = subparsers.add_parser('start_script', help='start a script (like a cultivation)')
     parser_start_cultivation.add_argument('--file', help='name of the lua script (stored on Shrooly) to start', required=True)
     subparsers.add_parser('stop_script', help='stop a script (like a cultivation)')
@@ -239,19 +239,19 @@ def main() -> None:
         else:
             logger.error("[CLI] Error during bluetooth disable, exiting..")
     
-    elif args.subcommand == "set_humidifer":
+    elif args.subcommand == "set_humidifier":
         if args.state == "ON":
             success = shrooly_instance.set_humidifier(1)
             if success == command_success.OK:
-                logger.info("[CLI] Humidifer turn on success")
+                logger.info("[CLI] humidifier turn on success")
             else:
-                logger.error("[CLI] Error during humidifer turn on, exiting..")
+                logger.error("[CLI] Error during humidifier turn on, exiting..")
         elif args.state == "OFF":
             success = shrooly_instance.set_humidifier(0)
             if success == command_success.OK:
-                logger.info("[CLI] Humidifer turn off success")
+                logger.info("[CLI] humidifier turn off success")
             else:
-                logger.error("[CLI] Error during humidifer turn off, exiting..")
+                logger.error("[CLI] Error during humidifier turn off, exiting..")
     
     elif args.subcommand == "set_current_time":
         current_time = datetime.now()
