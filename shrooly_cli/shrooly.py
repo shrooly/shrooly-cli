@@ -438,10 +438,10 @@ class shrooly:
             self.logger.error("[SHROOLY] Invalid state for humidifier, must be 0 or 1")
             return command_success.ERROR
         
-        self.logger.info(f"[SHROOLY] Trying to set humidifer to: {state}")
+        self.logger.info(f"[SHROOLY] Trying to set humidifier to: {state}")
         request_string = f"lua execute set_humidifier({state})"
         
-        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_humidifer_prompt")
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_humidifier_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
         if resp_status is not serial_callback_status.OK:
