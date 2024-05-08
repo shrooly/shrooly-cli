@@ -74,9 +74,11 @@ class serial_handler:
             self.logger.setLevel(log_level)
 
     def raiseSerialExceptionCallback(self):
-        self.logger.error("[SERIAL_HANDLER] Unexpected serial error, calling the exception callback..")
         if self.serialExceptionCallback is not None:
+            self.logger.error("[SERIAL_HANDLER] Unexpected serial error, calling the exception callback..")
             self.serialExceptionCallback()
+        else:
+            self.logger.error("[SERIAL_HANDLER] Unexpected serial error, no callback defined.")
     
     def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
         self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")

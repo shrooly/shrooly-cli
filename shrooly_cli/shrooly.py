@@ -40,9 +40,11 @@ class shrooly:
 
     logger = logging_handler()
     esp_reset_callback = None
+    exceptionCallback = None
 
-    def __init__(self, log_level=None, ext_logger=None, serial_log=None):
+    def __init__(self, log_level=None, ext_logger=None, serial_log=None, exceptionCallback=None):
         self.logger.ext_log_pipe = ext_logger
+        self.exceptionCallback = exceptionCallback
         
         if log_level is not None:
             self.logger.setLevel(log_level)
@@ -55,11 +57,18 @@ class shrooly:
     def kill(self):
         self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")
         self.serial_handler_instance.disconnect()
+        self.connected = False
         sys.exit()
 
     def serialExceptionCallback(self):
-        self.logger.critical("[SHROOLY] Unexpected error on serial_handler, exiting")
-        self.serial_handler_instance.disconnect()
+        self.logger.critical("[SHROOLY] Unexpected serial error in serial_handler")
+        
+        if self.connected:
+            self.serial_handler_instance.disconnect()
+            self.connected = False
+        
+        if self.exceptionCallback is not None:
+            self.exceptionCallback()
         sys.exit()
 
     def connect(self, port=None, baud=921600, no_reset=False, esp_reset_callback=None):
@@ -73,7 +82,7 @@ class shrooly:
             sys.exit()
         
         if no_reset == False:
-            self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Task initialization completed\.", self.callback_boot, True)
+            self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Initialization completed\.", self.callback_boot, True)
             self.serial_handler_instance.add_serial_trigger("fw_version", r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("hw_revision", r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
             self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", 
@@ -266,14 +275,10 @@ class shrooly:
                     for key, value in dictionary.items():
                         regex_str = "([A-Za-z_]+)[\(%\)]*"
                         re_match = re.search(regex_str, key)
-                        
-                        if re_match:
-                            key_new = re_match.group(1)
-                            if key_new == "Datetime":
-                                value = str(value.isoformat())
-                            json_line[key_new] = value
-                        else:
-                            print("no regex at: " + key)
+                        key_cleaned = re_match.group(1) # cleaning the unit inside the ()
+                        if isinstance(value, datetime):
+                            value = str(value.isoformat())
+                        json_line[key_cleaned] = value
 
                 json_resp[category_parsed] = json_line
             
@@ -308,10 +313,10 @@ class shrooly:
         #print(resp_payload)
         return command_success.OK, resp_payload
 
-    def send_file(self, file_name):
+    def send_file(self, file_path):
         self.logger.info("[SHROOLY] File transfer process has started!")
-        file_path = Path(file_name).name
-        self.logger.debug("[SHROOLY] File name from path: " + file_path)
+        file_name = Path(file_path).name
+        self.logger.debug("[SHROOLY] File name from path: " + file_name)
         
         if os.path.exists(file_path) is False:
             self.logger.error("[SHROOLY] Requested file doesn't exist on client device, exiting..")
@@ -327,7 +332,7 @@ class shrooly:
 
         if resp_status is serial_callback_status.OK:
             response_split = resp_payload.split('\r\n')
-            if response_split[1].startswith("error while deleting file"):
+            if response_split[1].startswith("status: error while deleting file"):
                 self.logger.info("[SHROOLY] File doesn't exist on Shrooly.")
             else:
                 self.logger.info("[SHROOLY] File already existed on Shrooly, deleted it.")
@@ -336,7 +341,7 @@ class shrooly:
             self.logger.error("[SHROOLY] Error while trying to delete file")
         
         try:
-            with open(file_name, 'r') as file:
+            with open(file_path, 'r') as file:
                 file_content = file.read()
             self.logger.info("[SHROOLY] File successfully opened on client")
         except:
@@ -434,7 +439,7 @@ class shrooly:
         return command_success.OK
     
     def set_humidifier(self, state):
-        if state is not 0 and state is not 1:
+        if state != 0 and state != 1:
             self.logger.error("[SHROOLY] Invalid state for humidifier, must be 0 or 1")
             return command_success.ERROR
         
