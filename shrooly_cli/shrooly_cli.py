@@ -6,6 +6,8 @@ import logging # logging
 import signal # for handling Ctrl-C exit preoperly
 from colorlog import ColoredFormatter
 from datetime import datetime # getting current time for logging
+from PIL import Image
+import base64
 
 # local dependencies
 from .shrooly import shrooly, command_success
@@ -86,6 +88,8 @@ def main() -> None:
     parser_set_humidifer.add_argument('--state', help='the state to set: on/off', choices=["ON", "OFF"], required=True)
     parser_start_cultivation = subparsers.add_parser('start_script', help='start a script (like a cultivation)')
     parser_start_cultivation.add_argument('--file', help='name of the lua script (stored on Shrooly) to start', required=True)
+    parser_capture_frame_buffer = subparsers.add_parser('capture_frame_buffer', help='capture and download the frame buffer (dev)')
+    parser_capture_frame_buffer.add_argument('--file', help='name of the file to be saved', required=True)
     subparsers.add_parser('stop_script', help='stop a script (like a cultivation)')
     subparsers.add_parser('set_current_time', help='set the current time')
     subparsers.add_parser('get_current_time', help='get the current time')
@@ -126,14 +130,14 @@ def main() -> None:
         lambda x, y: logger.error(y[:-2]))
     time.sleep(1)
     
-    if success == False:
+    if not success:
         logger.critical("[CLI] Error during connection, exiting..")
         shrooly_instance.disconnect()
         sys.exit()
         
     success = shrooly_instance.enterTerminal(not args.no_reset)
     
-    if success == False:
+    if not success:
         logger.critical("[CLI] Error during entering Terminal, exiting..")
         shrooly_instance.disconnect()
         sys.exit()
@@ -313,6 +317,59 @@ def main() -> None:
 
         if success:
             print(json.dumps(shrooly_instance.status['Program status'], indent=4))
+    elif args.subcommand == "reset":
+        shrooly_instance.reset()
+        pass        
+    elif args.subcommand == "capture_frame_buffer":
+        success, resp = shrooly_instance.capture_frame_buffer()
+
+        if success == command_success.OK:
+            payload = resp.split('\r\n')
+            current_time = datetime.now()
+            formatted_time = current_time.strftime("%Y-%m-%dT%H:%M:%S")
+            file_name = f"frame_buffer-{formatted_time}.png"
+            
+            width = 296
+            height = 128
+
+            framebuffer_data_base64 = ''.join(payload[1:-1])
+            
+            # Decode Base64 string to byte array
+            byte_array = base64.b64decode(framebuffer_data_base64)
+
+            # Create a new PIL image with 1-bit mode and the given dimensions
+            image = Image.new('1', (width, height))
+
+            # Load data into the image
+            pixels = list(image.getdata())
+
+            # Modify the pixel value for the first pixel
+
+            logger.info("[CLI] Length of framebuffer: ", len(byte_array))
+            logger.info("[CLI] Length of pixels: ", len(pixels))
+            logger.info("[CLI] Started writing pixel values, please wait, it may take up to 15 seconds..")
+            
+            for i in range(len(pixels)):
+                group_index = i//8
+                pixelgroup = byte_array[group_index]
+                value = pixelgroup & (1 << (7-(i % 8))) != 0
+                    
+                y = height-(i%height)-1
+                x = i//height
+                
+                if 0 <= x < width and 0 <= y < height:
+                    index = y * width + x
+                    pixels[index] = value
+                else:
+                    logger.error("[CLI] Coordinates out of bounds, skipping..")
+
+            # Update the image with the modified pixel values
+            image.putdata(pixels)
+
+            # Save the image as PNG
+            image.save(file_name)
+        else:
+            logger.error("[CLI] Error during capture_frame_buffer, exiting..")
     elif args.subcommand == "reset":
         shrooly_instance.reset()
         pass

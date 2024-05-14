@@ -528,6 +528,19 @@ class shrooly:
             return command_success.ERROR
         
         return command_success.OK
+    
+    def capture_frame_buffer(self):
+        self.logger.info(f"[SHROOLY] Requesting frame from device")
+        request_string = f"capture_frame_buffer"
+        
+        resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="capture_frame_buffer_prompt")
+        self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
+
+        if resp_status is not serial_callback_status.OK:
+            self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
+            return command_success.ERROR, ""
+        
+        return command_success.OK, resp_payload
 
     def parse_json(self, json_obj, path=''):
         if isinstance(json_obj, dict):
