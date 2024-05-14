@@ -303,7 +303,7 @@ def main() -> None:
         success = shrooly_instance.updateStatus()
 
         if success:
-            print(json.dumps(shrooly_instance.status['Program status'], indent=4))
+            print(json.dumps(shrooly_instance.status['Program_status'], indent=4))
     
     elif args.subcommand == "stop_script":
         success = shrooly_instance.stop_script()
@@ -316,7 +316,7 @@ def main() -> None:
         success = shrooly_instance.updateStatus()
 
         if success:
-            print(json.dumps(shrooly_instance.status['Program status'], indent=4))
+            print(json.dumps(shrooly_instance.status['Program_status'], indent=4))
     elif args.subcommand == "reset":
         shrooly_instance.reset()
         pass        
