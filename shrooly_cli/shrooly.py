@@ -135,7 +135,9 @@ class shrooly:
             self.disconnect()
             return False
 
-        time.sleep(0.1)
+        time.sleep(2)
+        # self.logger.debug("[SHROOLY] Sending ESC[0n")
+        # success = self.serial_handler_instance.direct_write('\x1b[0n')
         self.logger.debug("[SHROOLY] Sending CRLF")
 
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput='', name="login_prompt")
@@ -282,13 +284,18 @@ class shrooly:
 
                 json_resp[category_parsed] = json_line
             
-            self.status.update(json_resp) # TBD: selective update
+            self.status = json_resp
 
             return command_success.OK, json_resp
         except Exception as e:
             self.logger.error("[SHROOLY] Error during parsing of response: " + str(e))
             return command_success.ERROR, ""
-
+    def isScriptRunning(self):
+        if self.status is not {}:
+            if self.status["Program_status"]["Status"] == "idle":
+                return False
+            else:
+                return True
     
     def read_file(self, strInput):
         self.logger.info("[SHROOLY] Requesting read of file: " + strInput)
@@ -343,7 +350,7 @@ class shrooly:
         try:
             with open(file_path, 'r') as file:
                 file_content = file.read()
-            self.logger.info("[SHROOLY] File successfully opened on client")
+            self.logger.info("[SHROOLY] File successfully opened, preparing it for transfer..")
         except:
             self.logger.error("[SHROOLY] Error while opening file, maybe it doesn't extist?")
             return command_success.ERROR

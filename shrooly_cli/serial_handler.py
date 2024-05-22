@@ -21,6 +21,11 @@ class serial_interface_status(Enum):
     DISCONNECTED = 0
     CONNECTED = 1
     ERROR = 2
+    
+class ANSI_code:
+    def __init__(self, str_name, ANSI_string):
+        self.ANSI_string = ANSI_string
+        self.str_name = str_name
 
 class serial_trigger:
     name = ""
@@ -46,11 +51,14 @@ class serial_handler:
     serial_buffer = ""
     serial_trigger_array = []
     serial_line_buffer = ""
+    serial_line_buffer_sanitized = ""
     status = serial_interface_status.DISCONNECTED
     serial_debug_mode = False
     logger = logging_handler()
     serial_log = None
     serialExceptionCallback = None
+    known_ANSI_codes = None
+    longest_known_ANSI_code = 0
     
     def __init__(self, log_level=None,ext_logger=None, serial_log=None):
         self.ser = serial.Serial(
@@ -72,6 +80,16 @@ class serial_handler:
             self.logger.setLevel(ext_logger.getEffectiveLevel())
         elif log_level is not None:
             self.logger.setLevel(log_level)
+        
+        self.known_ANSI_codes = [
+            ANSI_code("ANSI_RED", "\x1b[0;31m"),
+            ANSI_code("ANSI_GREEN", "\x1b[0;32m"),
+            ANSI_code("ANSI_YELLOW", "\x1b[0;33m"),
+            ANSI_code("ANSI_RESET", "\x1b[0m"),
+            ANSI_code("GET_CURSOR_POS", "\x1b[6n"),
+            ANSI_code("ANSI_NOISEPROBE", "\x1b[5n")]
+        
+        self.longest_known_ANSI_code = max(len(code.ANSI_string) for code in self.known_ANSI_codes)
 
     def raiseSerialExceptionCallback(self):
         if self.serialExceptionCallback is not None:
@@ -141,6 +159,8 @@ class serial_handler:
             self.disconnect()
 
         last_check_time = 0
+        ANSI_detection_mode = False
+        ANSI_string = ""
         while True: # infinite loop for handling reads
             if self.exit_signal: # if the external exit_signal is raised, break the loop
                 self.logger.debug("[SERIAL_HANDLER] Exiting serial read loop")
@@ -149,10 +169,9 @@ class serial_handler:
             current_time = time.time()
             
             if last_check_time + 1 < current_time:
-                #print("checking timeouts..")
                 for serial_trigger_instance in self.serial_trigger_array:
                     if serial_trigger_instance.response_timeout > 0 and serial_trigger_instance.added_time + serial_trigger_instance.response_timeout < current_time:
-                        #print("timeout at: " + serial_trigger_instance.name)
+                        self.logger.critical("timeout at: " + serial_trigger_instance.name)
                         serial_trigger_instance.callback(serial_callback_status.TIMEOUT, "")
                         serial_trigger_instance.active = False
 
@@ -168,26 +187,77 @@ class serial_handler:
                 continue
 
             serial_cache = serial_cache.decode("utf-8", "ignore")
-
+            
             for serial_character in serial_cache:
-                self.serial_line_buffer = self.serial_line_buffer + str(serial_character)
+                serial_character_string = ""
                 
-                if(serial_character == '\n'):
-                    self.logger.debug("[SERIAL_HANDLER] processing line: " + self.remove_special_characters(self.serial_line_buffer))
+                if serial_character == '\x1b':
+                    serial_character_string = "(CHAR_ESCAPE)"
+                    ANSI_string = ""
+                    ANSI_detection_mode = True
+                    #print("ANSI DETECTION ON")
+                elif serial_character == '\r':
+                    serial_character_string = "\\r"
+                elif serial_character == '\n':
+                    serial_character_string = "\\n"
+                elif serial_character == ' ':
+                    serial_character_string = "(SPACE)"
+                else:
+                    serial_character_string = str(serial_character)
+                
+                # print(f"0x{ord(serial_character):02x}" + " : " + serial_character_string)
+                
+                if ANSI_detection_mode == True: # looking for ANSI escape characters
+                    ANSI_string += serial_character
+                                        
+                    match_name = ""
+                    for ansi_code_item in self.known_ANSI_codes:
+                        if ANSI_string == ansi_code_item.ANSI_string:
+                            match_name = ansi_code_item.str_name
+                            break
                     
-                    if self.serial_log is not None:
-                        with open(self.serial_log, mode='a', encoding='utf-8') as file:
-                            line_to_write = self.serial_line_buffer.replace('\r\r', '\r')
-                            file.write(self.clean_ansi_escape_codes(line_to_write))
+                    if match_name != "":
+                        #print("match: " + match_name)
+                        # print("there is a match, detection off")
+                        ANSI_detection_mode = False
+                        self.serial_line_buffer = self.serial_line_buffer + "(" + match_name + ")"
 
-                    self.process_serial_line_buffer()
-                    self.serial_buffer = self.serial_buffer + self.serial_line_buffer
-                    self.serial_line_buffer = ""
+                        if match_name == "ANSI_NOISEPROBE":
+                            self.logger.critical("ANSI_NOISEPROBE_DETECTED")
+                            self.logger.debug("[SERIAL_HANDLER] Sending ESC[0n")
+                            success = self.direct_write('\x1b[0n')
+                        if match_name == "GET_CURSOR_POS":
+                            self.logger.critical("ANSI_GET_CURSOR_POS_DETECTED")
+                            success = self.direct_write('\x1b[10;1R')
+                    
+                    if len(ANSI_string) > self.longest_known_ANSI_code:
+                        self.logger.critical("[SERIAL_HANDLER] detection string is too long, detection off. Aggregated code so far: " + ANSI_string)
+                        time.sleep(10)
+                        ANSI_detection_mode = False
+                else:
+                    if(serial_character == '\n'):
+                        self.serial_line_buffer = self.serial_line_buffer + "\\n"
+                        self.logger.debug("[SERIAL_HANDLER] processing line: \'" + self.serial_line_buffer + "\'")
+                        # self.logger.debug("[SERIAL_HANDLER] processing line (hex): " + ' '.join(f"0x{ord(c):02x}" for c in self.serial_line_buffer))
+                        if self.serial_log is not None:
+                            with open(self.serial_log, mode='a', encoding='utf-8') as file:
+                                line_to_write = self.serial_line_buffer.replace('\r\r', '\r')
+                                file.write(self.clean_ansi_escape_codes(line_to_write))
+
+                        self.process_serial_line_buffer()
+                        self.serial_buffer = self.serial_buffer + self.serial_line_buffer
+                        self.serial_line_buffer = ""
+                        self.serial_line_buffer_sanitized = ""
+                    elif(serial_character == "\r"):
+                        self.serial_line_buffer = self.serial_line_buffer + "\\r"
+                    else:
+                        self.serial_line_buffer = self.serial_line_buffer + str(serial_character)
+                        self.serial_line_buffer_sanitized = self.serial_line_buffer_sanitized + str(serial_character)
 
     def process_serial_line_buffer(self):
         for serial_trigger_instance in self.serial_trigger_array:            
             regex_pattern = serial_trigger_instance.regex_pattern
-            regex_match = re.search(regex_pattern, self.serial_line_buffer)
+            regex_match = re.search(regex_pattern, self.serial_line_buffer_sanitized)
             
             if regex_match: # If regex is a match
                 self.logger.debug("[SERIAL_HANDLER] Match at: \"" + serial_trigger_instance.name + "\"")
@@ -196,7 +266,7 @@ class serial_handler:
                     self.logger.debug("[SERIAL_HANDLER] Invoking callback: \"" + str(serial_trigger_instance.callback.__name__) + "\"")
                     
                     if serial_trigger_instance.response_type == serial_trigger_response_type.LINE:
-                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_line_buffer)
+                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_line_buffer_sanitized)
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.MATCHGROUPS:
                         serial_trigger_instance.callback(serial_callback_status.OK, regex_match.groups())
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.BUFFER: 
@@ -217,6 +287,7 @@ class serial_handler:
         data_to_send = strInput.encode('utf-8')
         self.serial_buffer = ""
         self.serial_line_buffer = ""
+        self.serial_line_buffer_sanitized = ""
         
         if self.ser.is_open == False:
             self.logger.critical("[SERIAL_HANDLER] Trying to write serial while it is not open! Returning." ) 
