@@ -1,5 +1,5 @@
 from .constants import PROMPT_REGEX
-from shrooly_cli.serial_handler import serial_trigger_response_type, serial_interface_status, serial_callback_status
+from shrooly_cli.serial_handler import serial_trigger_response_type, serial_interface_status, serial_trigger_result
 
 class terminal_handler:
     """
@@ -45,7 +45,7 @@ class terminal_handler:
     
     def send_command(self, strInput, name="", timeout=5, no_trigger=False):
         if self.serial_handler_instance.status is not serial_interface_status.CONNECTED:
-            return serial_callback_status.ERROR, ""
+            return serial_trigger_result.ERROR, ""
         
         if no_trigger is False:
             self.serial_handler_instance.add_serial_trigger(name, PROMPT_REGEX, self.terminal_command_callback, True, serial_trigger_response_type.BUFFER, timeout)
@@ -54,10 +54,10 @@ class terminal_handler:
         self.waiting_for_terminal_resp = True
 
         if no_trigger is True:
-            return serial_callback_status.OK, ""
+            return serial_trigger_result.OK, ""
         
         while True: 
             if self.waiting_for_terminal_resp is not True:
                 return self.terminal_resp_status, self.terminal_resp_payload
             if self.serial_handler_instance.status is not serial_interface_status.CONNECTED:
-                return serial_callback_status.ERROR, ""
+                return serial_trigger_result.ERROR, ""

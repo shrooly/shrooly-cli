@@ -9,7 +9,7 @@ from pathlib import Path # for opening and saving files
 from enum import Enum
 from serial.tools import list_ports
 from datetime import datetime # getting current time for logging
-from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_callback_status
+from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_trigger_result
 from .logging_handler import logging_handler, logging_level
 from .terminal_handler import terminal_handler
 from .fileconverter import string_to_comand_chunks
@@ -91,7 +91,7 @@ class shrooly:
             
         self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
         self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
-        self.connected = self.serial_handler_instance.connect(port, baud, no_reset)
+        self.connected = self.serial_handler_instance.connect(port, no_reset)
         
         return self.connected
     
@@ -140,15 +140,15 @@ class shrooly:
 
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput='', name="login_prompt")
         
-        if resp_status == serial_callback_status.OK:
+        if resp_status == serial_trigger_result.OK:
             self.logger.info("[SHROOLY] Successfully entered interactive mode")
             self.login_successful = True
             return True
-        elif resp_status == serial_callback_status.TIMEOUT:
+        elif resp_status == serial_trigger_result.TIMEOUT:
             self.logger.error("[SHROOLY] Timeout during entering interactive mode, exiting..")
             self.disconnect()
             return False
-        elif resp_status == serial_callback_status.ERROR:
+        elif resp_status == serial_trigger_result.ERROR:
             self.logger.error("[SHROOLY] Error during entering interactive mode, exiting..")
             self.disconnect()
             return False
@@ -192,7 +192,7 @@ class shrooly:
         return autoselected_port
     
     def callback_fw_version(self, status, payload):
-        if status == serial_callback_status.OK:
+        if status == serial_trigger_result.OK:
             self.logger.info("[SHROOLY] FW Version: " + payload[0])
             json_line = {}
             json_line['Boot-Firmware'] = {'version': payload[0],'build_date': payload[1]}
@@ -201,7 +201,7 @@ class shrooly:
             self.logger.error("[SHROOLY] Error while getting fw-version, got: " + str(payload))
 
     def callback_hw_version(self, status, payload):
-        if status == serial_callback_status.OK and len(payload) == 2:
+        if status == serial_trigger_result.OK and len(payload) == 2:
             self.logger.info("[SHROOLY] HW Version: " + payload[0] + " (" + payload[1] + ")")
             
             json_line = {}
@@ -211,14 +211,14 @@ class shrooly:
             self.logger.error("[SHROOLY] Error while getting hw-version, got: " + str(payload))
 
     def callback_compile_time(self, status, payload):
-        if status == serial_callback_status.OK:
+        if status == serial_trigger_result.OK:
             self.logger.info("[SHROOLY] Compile time: " + payload[0])
             self.status['compile_time'] = payload
         else:
             self.logger.error("[SHROOLY] Error while getting compile time, got: " + str(payload))
     
     def callback_boot(self, status, payload):
-        if status == serial_callback_status.OK:
+        if status == serial_trigger_result.OK:
             self.boot_successful = True
         else:
             self.logger.error("[SHROOLY] Error while looking for boot, got: " + str(payload))
@@ -231,7 +231,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="fs_list_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             # TBD: handle other types of errors
             return command_success.ERROR, ""
@@ -255,7 +255,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="status_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
         
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
 
@@ -295,7 +295,7 @@ class shrooly:
         request_string = f"fs read --file {strInput} --format ASCII"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="fs_read_prompt")
         
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
         #print(resp_payload.encode().hex())
@@ -330,7 +330,7 @@ class shrooly:
         request_string = f"fs delete {file_name}"
         resp_status, resp_payload = self.terminal_handler_inst.send_command(request_string, name="fs_delete_prompt")
 
-        if resp_status is serial_callback_status.OK:
+        if resp_status is serial_trigger_result.OK:
             response_split = resp_payload.split('\r\n')
             if response_split[1].startswith("status: error while deleting file"):
                 self.logger.info("[SHROOLY] File doesn't exist on Shrooly.")
@@ -376,7 +376,7 @@ class shrooly:
             #print(resp_status)
             #print(resp_payload)
 
-            if resp_status is serial_callback_status.OK:
+            if resp_status is serial_trigger_result.OK:
                 #self.logger.info("[SHROOLY] Chunk successfully transferred")
                 response_split = resp_payload.split('\r\n')
                 # print(response_split)
@@ -389,10 +389,10 @@ class shrooly:
                 else:
                     self.logger.error("[SHROOLY] Transfer was OK, but chunk wasn't accepted, retrying with same chunk.")
                     retries+= 1
-            elif resp_status is serial_callback_status.ERROR:
+            elif resp_status is serial_trigger_result.ERROR:
                 self.logger.error("[SHROOLY] Error during transmission, exiting.")
                 return command_success.ERROR
-            elif resp_status is serial_callback_status.TIMEOUT:
+            elif resp_status is serial_trigger_result.TIMEOUT:
                 self.logger.error("[SHROOLY] Timeout during transmission, NOT getting next chunk! Retry..")
                 retries+= 1
             
@@ -414,7 +414,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="fs_delete_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             # TBD: handle other types of errors
             return command_success.ERROR
@@ -432,7 +432,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_datetime_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -449,7 +449,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="set_humidifer_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -462,7 +462,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="get_datetime_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
         
@@ -484,7 +484,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="start_script_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -497,7 +497,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="stop_script_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -510,7 +510,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="bt_disable_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -523,7 +523,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="reboot_prompt", no_trigger=True)
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR
         
@@ -536,7 +536,7 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput=request_string, name="capture_frame_buffer_prompt")
         self.logger.debug("[SHROOLY] Response status:" + str(resp_status))
 
-        if resp_status is not serial_callback_status.OK:
+        if resp_status is not serial_trigger_result.OK:
             self.logger.error("[SHROOLY] Error during request: " + str(resp_status))
             return command_success.ERROR, ""
         

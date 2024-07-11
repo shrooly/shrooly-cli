@@ -1,5 +1,7 @@
 import time
-import serial
+# import serial
+import os
+import subprocess
 import threading
 import re
 from enum import Enum
@@ -7,7 +9,7 @@ from .constants import (HIGH, LOW, MINIMAL_EN_LOW_DELAY)
 from .logging_handler import logging_handler, logging_level
 from datetime import datetime
 
-class serial_callback_status(Enum):
+class serial_trigger_result(Enum):
     OK = 0
     ERROR = 1
     TIMEOUT = 2
@@ -47,17 +49,15 @@ class serial_handler:
     serial_trigger_array = []
     serial_line_buffer = ""
     status = serial_interface_status.DISCONNECTED
-    serial_debug_mode = False
     logger = logging_handler()
     serial_log = None
     serialExceptionCallback = None
     
+    master_fd = None
+    slave_fd = None
+    idf_monitor_process = None
+    
     def __init__(self, log_level=None,ext_logger=None, serial_log=None):
-        self.ser = serial.Serial(
-            write_timeout = 0,
-            timeout = 1
-        )
-        
         self.logger.ext_log_pipe = ext_logger
         self.serial_log = serial_log
 
@@ -79,54 +79,59 @@ class serial_handler:
             self.serialExceptionCallback()
         else:
             self.logger.error("[SERIAL_HANDLER] Unexpected serial error, no callback defined.")
+            
+    def read_stderr(self, pipe):
+        while True:
+            output = pipe.read(1024)
+            if not output:
+                break
+            if self.exit_signal:
+                break
+            print(f"STDERR: {output}", end='')
     
-    def connect(self, port='/dev/ttyACM0', baud=921600, no_reset=False):
-        self.logger.debug("[SERIAL_HANDLER] Serial connect has been called")
-        try:
-            self.ser = serial.serial_for_url(port, baud, write_timeout=1, timeout=1, do_not_open=True, exclusive=True)
-            self.ser.setRTS(LOW)
-            self.ser.setDTR(LOW)
-            
-            self.ser.open()
-            self.logger.info("[SERIAL_HANDLER] Successfully opened serial!")
-
-            self.ser.setRTS(HIGH)
-            self.ser.setDTR(HIGH)
-        except Exception as e:
-            self.logger.critical("[SERIAL_HANDLER] Couldn't connect to serial at " + port + ", baud: " + str(baud) + ". Exception: " + str(e))
-            self.disconnect()
-            return False
-
-        if(no_reset==False):
-            self.logger.info("[SERIAL_HANDLER] Sending hard reset to device..")
-            
-            self.ser.setRTS(LOW)  # EN=LOW, chip in reset
-            time.sleep(MINIMAL_EN_LOW_DELAY)
-            self.ser.setRTS(HIGH)  # EN=HIGH, chip out of reset
+    def connect(self, port='/dev/ttyACM0', no_reset=False):
+        self.logger.debug("[SERIAL_HANDLER] Opening esp-idf monitor..")
+        
+        self.master_fd, self.slave_fd = os.openpty()
+        
+        command = ["python3", "-m", "esp_idf_monitor", "--no-reset", "-p", port]
+        
+        if no_reset == False:
+            command = ["python3", "-m", "esp_idf_monitor", "-p", port]
+        
+        self.idf_monitor_process = subprocess.Popen(command, stdin=self.slave_fd, stdout=self.slave_fd, stderr=subprocess.PIPE, text=True)
+        self.stderr_thread = threading.Thread(target=self.read_stderr, args=(self.idf_monitor_process.stderr,))
+        self.stderr_thread.start()
         
         self.read_thread = threading.Thread(target=self.handle_read_serial_port)
         self.read_thread.start()
 
-        self.logger.debug("[SERIAL_HANDLER] Serial connection successful!")
+        self.logger.debug("[SERIAL_HANDLER] Opening was successful!")
         self.status = serial_interface_status.CONNECTED
         return True
 
     def disconnect(self):
         self.logger.debug("[SERIAL_HANDLER] Serial disconnect has been called")
         self.logger.debug("[SERIAL_HANDLER] Stopping serial read thread")
-        self.exit_signal = True    
+        self.exit_signal = True
         # Calling every outstanding serial trigger with status.ERROR, empty payload
         self.logger.debug("[SERIAL_HANDLER] Calling single use, still active triggers..")
         for serial_trigger_instance in self.serial_trigger_array:
             
             if serial_trigger_instance.single_use is True:
-                serial_trigger_instance.callback(serial_callback_status.ERROR, "")
+                serial_trigger_instance.callback(serial_trigger_result.ERROR, "")
                 serial_trigger_instance.active = False
 
         self.serial_trigger_array = []
         
-        self.ser.close()
-        self.logger.info("[SERIAL_HANDLER] Serial disconnected!")
+        #os.close(self.master_fd)
+        #os.close(self.slave_fd)
+        
+        self.idf_monitor_process.terminate()
+        self.idf_monitor_process.wait()
+        # self.stderr_thread.join()
+        
+        self.logger.info("[SERIAL_HANDLER] esp-idf disconnected!")
         self.status = serial_interface_status.DISCONNECTED
 
     def add_serial_trigger(self, trigger_name, regex_trigger, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=10):
@@ -135,8 +140,8 @@ class serial_handler:
         self.serial_trigger_array.append(serial_trigger_instance)
     
     def handle_read_serial_port(self):
-        if not self.ser.is_open: # exit if serial port is not open
-            self.logger.critical("[SERIAL_HANDLER] Serial port is not open while attempting to read, exiting..")
+        if not self.status == serial_interface_status.CONNECTED: # exit if serial reader is not connected
+            self.logger.critical("[SERIAL_HANDLER] Serial handler is not connected while attempting to read, exiting..")
             self.raiseSerialExceptionCallback()
             self.disconnect()
 
@@ -153,23 +158,22 @@ class serial_handler:
                 for serial_trigger_instance in self.serial_trigger_array:
                     if serial_trigger_instance.response_timeout > 0 and serial_trigger_instance.added_time + serial_trigger_instance.response_timeout < current_time:
                         #print("timeout at: " + serial_trigger_instance.name)
-                        serial_trigger_instance.callback(serial_callback_status.TIMEOUT, "")
+                        serial_trigger_instance.callback(serial_trigger_result.TIMEOUT, "")
                         serial_trigger_instance.active = False
 
                 last_check_time = time.time()
             
             self.serial_trigger_array = [obj for obj in self.serial_trigger_array if obj.active]
             try: # try to read, exit the script if error is detected
-                serial_cache = self.ser.read_all()
+                serial_cache = os.read(self.master_fd, 128).decode("utf-8", "ignore")
             except Exception as e:
                 self.logger.critical("[SERIAL_HANDLER] Serial read error: " + str(e))
                 self.raiseSerialExceptionCallback()
                 self.disconnect()
                 continue
 
-            serial_cache = serial_cache.decode("utf-8", "ignore")
-
             for serial_character in serial_cache:
+                # print(serial_character + ", HEX: " + self.get_hex_string(serial_character))
                 self.serial_line_buffer = self.serial_line_buffer + str(serial_character)
                 
                 if(serial_character == '\n'):
@@ -196,11 +200,11 @@ class serial_handler:
                     self.logger.debug("[SERIAL_HANDLER] Invoking callback: \"" + str(serial_trigger_instance.callback.__name__) + "\"")
                     
                     if serial_trigger_instance.response_type == serial_trigger_response_type.LINE:
-                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_line_buffer)
+                        serial_trigger_instance.callback(serial_trigger_result.OK, self.serial_line_buffer)
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.MATCHGROUPS:
-                        serial_trigger_instance.callback(serial_callback_status.OK, regex_match.groups())
+                        serial_trigger_instance.callback(serial_trigger_result.OK, regex_match.groups())
                     elif serial_trigger_instance.response_type == serial_trigger_response_type.BUFFER: 
-                        serial_trigger_instance.callback(serial_callback_status.OK, self.serial_buffer)
+                        serial_trigger_instance.callback(serial_trigger_result.OK, self.serial_buffer)
                 else: # There is no callback
                     self.logger.debug("[SERIAL_HANDLER] No callback has been specified")
 
@@ -218,13 +222,14 @@ class serial_handler:
         self.serial_buffer = ""
         self.serial_line_buffer = ""
         
-        if self.ser.is_open == False:
-            self.logger.critical("[SERIAL_HANDLER] Trying to write serial while it is not open! Returning." ) 
-            return False
+        if not self.status == serial_interface_status.CONNECTED: # exit if serial handler is not connected
+            self.logger.critical("[SERIAL_HANDLER] Serial handler is not connected while attempting to write, exiting..")
+            self.raiseSerialExceptionCallback()
+            self.disconnect()
+            return
 
-        self.ser.flushInput()
         try:
-            self.ser.write(data_to_send)
+            os.write(self.master_fd, data_to_send)
         except Exception as e:
             self.logger.critical("[SERIAL_HANDLER] Error while writing to serial port: " + str(e)) 
             self.raiseSerialExceptionCallback()

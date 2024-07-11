@@ -1,4 +1,4 @@
-GHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!"#$%&€£¥'()*+,-./:;<=>?@[\]^_`{|}~©®™°§¶"~
+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!"#$%&€£¥'()*+,-./:;<=>?@[\]^_`{|}~©®™°§¶"~
 BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!"#$%&€£¥'()*+,-./:;<=>?@[\]^_`{|}~©®™°§¶"~A
 CDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!"#$%&€£¥'()*+,-./:;<=>?@[\]^_`{|}~©®™°§¶"~AB
 DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!"#$%&€£¥'()*+,-./:;<=>?@[\]^_`{|}~©®™°§¶"~ABC
