@@ -1,5 +1,4 @@
 import time
-# import serial
 import os
 import subprocess
 import threading
@@ -100,17 +99,24 @@ class serial_handler:
             command = ["python3", "-m", "esp_idf_monitor", "-p", port]
         
         self.idf_monitor_process = subprocess.Popen(command, stdin=self.slave_fd, stdout=self.slave_fd, stderr=subprocess.PIPE, text=True)
+        
+        self.logger.debug("[SERIAL_HANDLER] Opening was successful!")
+        self.status = serial_interface_status.CONNECTED
+        
         self.stderr_thread = threading.Thread(target=self.read_stderr, args=(self.idf_monitor_process.stderr,))
         self.stderr_thread.start()
         
         self.read_thread = threading.Thread(target=self.handle_read_serial_port)
         self.read_thread.start()
-
-        self.logger.debug("[SERIAL_HANDLER] Opening was successful!")
-        self.status = serial_interface_status.CONNECTED
+        
         return True
 
     def disconnect(self):
+        if not self.status == serial_interface_status.CONNECTED:
+            self.logger.info("[SERIAL_HANDLER] Serial is already closed while attempting to disconnect")
+            return
+        
+        self.status = serial_interface_status.DISCONNECTED
         self.logger.debug("[SERIAL_HANDLER] Serial disconnect has been called")
         self.logger.debug("[SERIAL_HANDLER] Stopping serial read thread")
         self.exit_signal = True
@@ -124,15 +130,14 @@ class serial_handler:
 
         self.serial_trigger_array = []
         
-        #os.close(self.master_fd)
-        #os.close(self.slave_fd)
+        os.close(self.master_fd)
+        os.close(self.slave_fd)
         
         self.idf_monitor_process.terminate()
         self.idf_monitor_process.wait()
-        # self.stderr_thread.join()
+        self.stderr_thread.join()
         
         self.logger.info("[SERIAL_HANDLER] esp-idf disconnected!")
-        self.status = serial_interface_status.DISCONNECTED
 
     def add_serial_trigger(self, trigger_name, regex_trigger, callback=None, single_use=False, response_type=serial_trigger_response_type.BUFFER, response_timeout=10):
         serial_trigger_instance = serial_trigger(trigger_name, regex_trigger, callback, single_use, response_type, response_timeout)
@@ -167,10 +172,10 @@ class serial_handler:
             try: # try to read, exit the script if error is detected
                 serial_cache = os.read(self.master_fd, 128).decode("utf-8", "ignore")
             except Exception as e:
-                self.logger.critical("[SERIAL_HANDLER] Serial read error: " + str(e))
-                self.raiseSerialExceptionCallback()
-                self.disconnect()
-                continue
+                if self.status is serial_interface_status.CONNECTED:
+                    self.logger.critical("[SERIAL_HANDLER] Serial read error: " + str(e))
+                    self.raiseSerialExceptionCallback()
+                    self.disconnect()
 
             for serial_character in serial_cache:
                 # print(serial_character + ", HEX: " + self.get_hex_string(serial_character))

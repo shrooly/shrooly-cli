@@ -71,7 +71,7 @@ class shrooly:
             self.exceptionCallback()
         sys.exit()
 
-    def connect(self, port=None, baud=921600, no_reset=False, esp_reset_callback=None):
+    def connect(self, port=None, no_reset=False, esp_reset_callback=None):
         self.esp_reset_callback = esp_reset_callback
         if port is None:
             self.logger.debug("[SHROOLY] Serial port is not specified, autoselecting it..")
@@ -89,7 +89,7 @@ class shrooly:
                                                             lambda x, y: 
                                                                 self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
             
-        self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port + " @baud: " + str(baud))
+        self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port)
         self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
         self.connected = self.serial_handler_instance.connect(port, no_reset)
         
