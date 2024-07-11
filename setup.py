@@ -10,6 +10,7 @@ setup(
     install_requires=[
         'pyserial',
         'pyyaml',
-        'colorlog'
+        'colorlog',
+        'pillow'
     ],
 )
