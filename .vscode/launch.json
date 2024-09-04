@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "shrooly_cli",
-            "args": "--no-reset capture_frame_buffer --file alma.png"
+            "args": "status"
         }
     ]
 }

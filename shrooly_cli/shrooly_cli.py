@@ -101,7 +101,6 @@ def main() -> None:
     subparsers.add_parser('disable_bt', help='disable Bluetooth radio')
     
     parser.add_argument("--serial-port", help="set the Shrooly's serial-port")
-    parser.add_argument("--serial-baud", default=921600, help="set the Shrooly's serial-port baud")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING"], default="INFO", help="Set the logging level (DEBUG, INFO, WARNING)")
     parser.add_argument("--no-reset", action='store_true', help="Disable reset on connection")
     parser.add_argument("--serial-log", help="External logging to textfile")
@@ -125,7 +124,6 @@ def main() -> None:
     
     success = shrooly_instance.connect(
         args.serial_port, 
-        args.serial_baud, 
         args.no_reset,
         lambda x, y: logger.error(y[:-2]))
     time.sleep(1)
