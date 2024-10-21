@@ -10,6 +10,8 @@ setup(
     install_requires=[
         'pyserial',
         'pyyaml',
-        'colorlog'
+        'colorlog',
+        'Pillow',
+        "esp-idf-monitor"
     ],
 )

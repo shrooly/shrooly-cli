@@ -11,7 +11,6 @@ import base64
 
 # local dependencies
 from .shrooly import shrooly, command_success
-from .constants import MIN_FW_VERSION
 from .log_to_file import log_to_file
 from .logging_handler import logging_level
 
@@ -104,7 +103,6 @@ def main() -> None:
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING"], default="INFO", help="Set the logging level (DEBUG, INFO, WARNING)")
     parser.add_argument("--no-reset", action='store_true', help="Disable reset on connection")
     parser.add_argument("--serial-log", help="External logging to textfile")
-    parser.add_argument("--no-fw-check", action='store_true', help="Disable fw version checking")
 
     args = parser.parse_args()
 
@@ -140,20 +138,20 @@ def main() -> None:
         shrooly_instance.disconnect()
         sys.exit()
     
-    if args.no_fw_check is None:
-        success, resp = shrooly_instance.updateStatus()
-            
-        if success:
-            logger.info("[CLI] Status updated")
-            if args.no_reset == False:
-                if compare_calver_versions(MIN_FW_VERSION, shrooly_instance.status['Boot-Firmware']['version']) <= 0:
-                    logger.info("[CLI] Firmware version is higher than the required minimum")
-                else:
-                    logger.error("[CLI] Firmware version is LOWER than the required minimum: " + MIN_FW_VERSION)
-            else:
-                logger.info("[CLI] no-reset flag is set, couldn't check if device satisifies minimum fw version of: " + MIN_FW_VERSION)
-        else:
-            logger.error("[CLI] Error during status update command, continuing..")
+    success, resp = shrooly_instance.updateStatus()
+        
+    if success:
+        logger.info("[CLI] Status of device successfully updated")
+        logger.info("[CLI] MAC: " + shrooly_instance.status["System"]["MAC_address"])
+        logger.info("[CLI] Time read from device: " + shrooly_instance.status['System']['Datetime'])
+        time_from_device = datetime.fromisoformat(shrooly_instance.status['System']['Datetime'])
+        current_time = datetime.now()
+        time_difference = abs((time_from_device-current_time).total_seconds())
+        time_diff_formatted = f"+{float(time_difference):.2f}" if float(time_difference) >= 0 else f"{float(time_difference):.2f}"
+        logger.info(f"[CLI] Time difference: {time_diff_formatted}s")
+    else:
+        logger.error("[CLI] Error during status update command, exiting..")
+        sys.exit()
 
     if args.subcommand == "list_files":
         success, files = shrooly_instance.list_files()
@@ -215,14 +213,7 @@ def main() -> None:
             logger.error("Error during reading of file, maybe it doesn't exist?")
     
     elif args.subcommand == "status":
-        if args.no_fw_check is not None:
-            success, resp = shrooly_instance.updateStatus()
-            if success is command_success.OK:
-                logger.info("[CLI] Status updated")
-            else:
-                logger.error("[CLI] Error during status update command, continuing..")
-
-        json_converted = json.dumps(shrooly.status, indent=4)
+        json_converted = json.dumps(shrooly_instance.status, indent=4)
         print(json_converted)
     
     elif args.subcommand == "logger":
@@ -266,7 +257,7 @@ def main() -> None:
             time_difference = abs((time_from_device-current_time).total_seconds())
             if time_difference < 10:
                 time_diff_formatted = f"+{float(time_difference):.2f}" if float(time_difference) >= 0 else f"{float(time_difference):.2f}"
-                logger.info(f"[CLI] Time difference: {time_diff_formatted} s")
+                logger.info(f"[CLI] Time difference: {time_diff_formatted}s")
             else:
                 logger.error("[CLI] The read time doesn't match the sent one")
         else:
@@ -282,7 +273,7 @@ def main() -> None:
             time_difference = abs((time_from_device-current_time).total_seconds())
             time_diff_formatted = f"+{float(time_difference):.2f}" if float(time_difference) >= 0 else f"{float(time_difference):.2f}"
 
-            logger.info(f"[CLI] Time difference: {time_diff_formatted} s")
+            logger.info(f"[CLI] Time difference: {time_diff_formatted}s")
             if time_difference < 10:
                 logger.info("[CLI] Time is within 10 seconds of local time")
             else:
@@ -315,9 +306,6 @@ def main() -> None:
 
         if success:
             print(json.dumps(shrooly_instance.status['Program_status'], indent=4))
-    elif args.subcommand == "reset":
-        shrooly_instance.reset()
-        pass        
     elif args.subcommand == "capture_frame_buffer":
         success, resp = shrooly_instance.capture_frame_buffer()
 

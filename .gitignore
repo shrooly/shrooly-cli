@@ -3,3 +3,4 @@ __pycache__/
 test/logs/
 hex_stream.txt
 test/recipe_copy.lua
+.vscode/
