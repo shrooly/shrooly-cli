@@ -47,10 +47,12 @@ class serial_handler:
     serial_buffer = ""
     serial_trigger_array = []
     serial_line_buffer = ""
+    stderr_buffer = ""
     status = serial_interface_status.DISCONNECTED
     logger = logging_handler()
     serial_log = None
     serialExceptionCallback = None
+    stderrLineReceivedCallback = None
     
     master_fd = None
     slave_fd = None
@@ -81,22 +83,27 @@ class serial_handler:
             
     def read_stderr(self, pipe):
         while True:
-            output = pipe.read(1024)
+            output = pipe.read(1)
             if not output:
                 break
             if self.exit_signal:
                 break
-            print(f"STDERR: {output}", end='')
+            # print("read output: " + output)
+            for char in output:
+                if char == '\n' or char == '.':
+                    self.stderrLineReceivedCallback(self.stderr_buffer)
+                    # print("IT IS A LINE IN STDERR: " + )
+                    self.stderr_buffer = ""
+                else:
+                    self.stderr_buffer += char
+                    
     
-    def connect(self, port='/dev/ttyACM0', no_reset=False):
+    def connect(self, port='/dev/ttyACM0'):
         self.logger.debug("[SERIAL_HANDLER] Opening esp-idf monitor..")
         
         self.master_fd, self.slave_fd = os.openpty()
         
-        command = ["python3", "-m", "esp_idf_monitor", "--no-reset", "-p", port]
-        
-        if no_reset == False:
-            command = ["python3", "-m", "esp_idf_monitor", "-p", port]
+        command = ["python3", "-m", "esp_idf_monitor", "-p", port]
         
         self.idf_monitor_process = subprocess.Popen(command, stdin=self.slave_fd, stdout=self.slave_fd, stderr=subprocess.PIPE, text=True)
         
@@ -120,6 +127,7 @@ class serial_handler:
         self.logger.debug("[SERIAL_HANDLER] Serial disconnect has been called")
         self.logger.debug("[SERIAL_HANDLER] Stopping serial read thread")
         self.exit_signal = True
+        
         # Calling every outstanding serial trigger with status.ERROR, empty payload
         self.logger.debug("[SERIAL_HANDLER] Calling single use, still active triggers..")
         for serial_trigger_instance in self.serial_trigger_array:
@@ -135,7 +143,7 @@ class serial_handler:
         
         self.idf_monitor_process.terminate()
         self.idf_monitor_process.wait()
-        self.stderr_thread.join()
+        # self.stderr_thread.join()
         
         self.logger.info("[SERIAL_HANDLER] esp-idf disconnected!")
 
@@ -228,9 +236,9 @@ class serial_handler:
         self.serial_line_buffer = ""
         
         if not self.status == serial_interface_status.CONNECTED: # exit if serial handler is not connected
-            self.logger.critical("[SERIAL_HANDLER] Serial handler is not connected while attempting to write, exiting..")
-            self.raiseSerialExceptionCallback()
-            self.disconnect()
+            self.logger.critical("[SERIAL_HANDLER] Serial handler is not connected while attempting to write! Continuing..")
+            # self.raiseSerialExceptionCallback()
+            # self.disconnect()
             return
 
         try:

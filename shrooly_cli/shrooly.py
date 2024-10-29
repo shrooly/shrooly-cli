@@ -30,21 +30,26 @@ class shrooly_file:
 
 class shrooly:
     status = {}
+    serialPort = ""
     boot_successful = False
-    login_successful = False
-    connected = False
+    SerialConnected = False
+    Connected = False
     communication_in_progress = False
     file_list = []
     terminal_handler_inst = None
     version = CLI_VERSION
 
     logger = logging_handler()
-    esp_reset_callback = None
-    exceptionCallback = None
+    espResetCallback = None
+    serialExceptionCallback = None
+    stderrLineReceivedCallback = None
 
-    def __init__(self, log_level=None, ext_logger=None, serial_log=None, exceptionCallback=None):
+    def __init__(self, serialPort = "", log_level=None, ext_logger=None, serial_log=None, serialExceptionCallback=None, espResetCallback=None, stderrLineReceivedCallback=None):
         self.logger.ext_log_pipe = ext_logger
-        self.exceptionCallback = exceptionCallback
+        self.serialExceptionCallback = serialExceptionCallback
+        self.espResetCallback = espResetCallback
+        self.serialPort = serialPort
+        self.stderrLineReceivedCallback = stderrLineReceivedCallback
         
         if log_level is not None:
             self.logger.setLevel(log_level)
@@ -57,76 +62,104 @@ class shrooly:
     def kill(self):
         self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")
         self.serial_handler_instance.disconnect()
-        self.connected = False
-        sys.exit()
+        self.SerialConnected = False
+        self.Connected = False
+        # sys.exit()
 
-    def serialExceptionCallback(self):
+    def serialExceptionCallbackHandler(self):
         self.logger.critical("[SHROOLY] Unexpected serial error in serial_handler")
         
-        if self.connected:
+        if self.SerialConnected:
             self.serial_handler_instance.disconnect()
-            self.connected = False
+            self.SerialConnected = False
+            self.Connected = False
         
-        if self.exceptionCallback is not None:
-            self.exceptionCallback()
-        sys.exit()
+        if self.serialExceptionCallback is not None:
+            self.serialExceptionCallback()
+        # sys.exit()
+        
+    def stderrLineReceivedHandler(self, line):
+        if self.stderrLineReceivedCallback is not None and self.Connected:
+            self.stderrLineReceivedCallback(line)
 
-    def connect(self, port=None, no_reset=False, esp_reset_callback=None):
-        self.esp_reset_callback = esp_reset_callback
-        if port is None:
-            self.logger.debug("[SHROOLY] Serial port is not specified, autoselecting it..")
-            port = self.autoselect_serial()
+    def openSerial(self):
+        if self.serialPort is None:
+            self.logger.info("[SHROOLY] Serial port is not specified, autoselecting it..")
+            self.serialPort = self.autoselect_serial()
         
-        if port == "":
+        if self.serialPort == "":
             self.logger.critical("[SHROOLY] No serial devices found, exiting..")
-            sys.exit()
-        
-        if no_reset == False:
-            self.serial_handler_instance.add_serial_trigger("boot_finish", r"I \(\d+\) [a-zA-Z_]*: Initialization completed\.", self.callback_boot, True)
-            self.serial_handler_instance.add_serial_trigger("fw_version", r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)", self.callback_fw_version, True, serial_trigger_response_type.MATCHGROUPS)
-            self.serial_handler_instance.add_serial_trigger("hw_revision", r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)", self.callback_hw_version, True, serial_trigger_response_type.MATCHGROUPS)
-            self.serial_handler_instance.add_serial_trigger("esp_error_catcher", r"E \(\d+\).*", 
-                                                            lambda x, y: 
-                                                                self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])), False, serial_trigger_response_type.LINE, response_timeout=0)
+            return False
             
-        self.logger.info("[SHROOLY] Connecting to Shrooly at: " + port)
-        self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallback
-        self.connected = self.serial_handler_instance.connect(port, no_reset)
+        self.logger.info("[SHROOLY] Connecting to Shrooly at: " + self.serialPort)
+        self.serial_handler_instance.serialExceptionCallback = self.serialExceptionCallbackHandler
+        self.serial_handler_instance.stderrLineReceivedCallback = self.stderrLineReceivedHandler
+        self.SerialConnected = self.serial_handler_instance.connect(self.serialPort)
         
-        return self.connected
+        return self.SerialConnected
     
-    def enterTerminal(self, wait_for_reset=True):
-        if self.esp_reset_callback is not None:
-            time.sleep(0.5)
+    def connect(self):
+        # Looking for boot finish completed sentence in boot log
+        self.serial_handler_instance.add_serial_trigger(
+            trigger_name="boot_finish", 
+            regex_trigger=r"I \(\d+\) [a-zA-Z_]*: Initialization completed\.",
+            callback=self.callback_boot, 
+            single_use=True)
+        
+        # Looking for firmware version in boot log
+        self.serial_handler_instance.add_serial_trigger(
+            trigger_name="fw_version", 
+            regex_trigger=r"I \(\d+\) SHROOLY_MAIN: Firmware: (v\d+.\d+-\d+) \((Build: [a-zA-Z0-9,: ]+)\)",
+            callback=self.callback_fw_version, 
+            single_use=True, 
+            response_type=serial_trigger_response_type.MATCHGROUPS)
+        
+        # Looking for hw revision in boot log
+        self.serial_handler_instance.add_serial_trigger(
+            trigger_name="hw_revision",
+            regex_trigger=r"I \(\d+\) SHROOLY_MAIN: HW revision:\s+(0b\d+) \(PCB (v\d\.\d)\)",
+            callback=self.callback_hw_version, 
+            single_use=True, 
+            response_type=serial_trigger_response_type.MATCHGROUPS)
+        
+        # Looking for esp errors in the WHOLE serial comm
+        self.serial_handler_instance.add_serial_trigger(
+            trigger_name="esp_error_catcher", 
+            regex_trigger=r"E \(\d+\).*", 
+            callback=lambda x, y: self.logger.error("[SHROOLY] ESP_ERROR: " + str(y[:-2])),
+            single_use=False,
+            response_type=serial_trigger_response_type.LINE, 
+            response_timeout=0)
+        
+        boot_started_time = time.time()
+        
+        self.logger.info("[SHROOLY] Waiting for boot to finish..")
+        boot_tries = 0
+        boot_tries_limit = 100
+        
+        while True:
+            if self.boot_successful == True:
+                boot_finish_time = time.time()
+                self.logger.info("[SHROOLY] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + " s")
+                break
+            time.sleep(0.1)
+            boot_tries+=1
+            if boot_tries == boot_tries_limit:
+                self.logger.critical("[SHROOLY] Couldn't finish boot in 10 seconds, exiting..")
+                self.kill()
+            
+        if self.espResetCallback is not None:
             self.serial_handler_instance.add_serial_trigger(
                 trigger_name="esp_reset_catcher", 
                 regex_trigger=r"rst:0x[0-9a-f]+ \(([A-Z_]+)\),boot:0x[0-9a-f]+ \(([A-Z_]+)\).*",
-                callback=self.esp_reset_callback, 
+                callback=self.espResetCallback, 
                 single_use=False, 
                 response_type=serial_trigger_response_type.LINE, 
                 response_timeout=0)
         
-        boot_started_time = time.time()
-        
-        if wait_for_reset is True:
-            self.logger.info("[SHROOLY] Waiting for boot to finish..")
-            boot_tries = 0
-            boot_tries_limit = 100
+        time.sleep(0.5)
             
-            while True:
-                if self.boot_successful == True:
-                    boot_finish_time = time.time()
-                    self.logger.info("[SHROOLY] Booted successfully! Time: " + "{:.2f}".format((boot_finish_time-boot_started_time)) + " s")
-                    break
-                time.sleep(0.1)
-                boot_tries+=1
-                if boot_tries == boot_tries_limit:
-                    self.logger.critical("[SHROOLY] Couldn't finish boot in 10 seconds, exiting..")
-                    self.kill()
-            
-        time.sleep(1)
-            
-        self.logger.info("[SHROOLY] Sending CTRL+C to Shrooly to enter interactive mode")
+        self.logger.info("[SHROOLY] Sending CTRL+C to Shrooly to enter the terminal")
 
         success = self.serial_handler_instance.direct_write('\x03')
         
@@ -141,24 +174,25 @@ class shrooly:
         resp_status, resp_payload = self.terminal_handler_inst.send_command(strInput='', name="login_prompt")
         
         if resp_status == serial_trigger_result.OK:
-            self.logger.info("[SHROOLY] Successfully entered interactive mode")
-            self.login_successful = True
+            self.logger.info("[SHROOLY] Successfully entered terminal")
+            self.Connected = True
             return True
         elif resp_status == serial_trigger_result.TIMEOUT:
-            self.logger.error("[SHROOLY] Timeout during entering interactive mode, exiting..")
+            self.logger.error("[SHROOLY] Timeout during entering terminal, exiting..")
             self.disconnect()
             return False
         elif resp_status == serial_trigger_result.ERROR:
-            self.logger.error("[SHROOLY] Error during entering interactive mode, exiting..")
+            self.logger.error("[SHROOLY] Error during entering terminal, exiting..")
             self.disconnect()
             return False
         else:
-            self.logger.critical("[SHROOLY] Unknown during entering interactive mode, exiting..")
+            self.logger.critical("[SHROOLY] Unknown during entering terminal, exiting..")
             self.disconnect()
             return False
     
     def disconnect(self):
-        if self.connected:
+        self.Connected = False
+        if self.SerialConnected:
             self.serial_handler_instance.disconnect()
     
     def autoselect_serial(self):
@@ -193,7 +227,7 @@ class shrooly:
     
     def callback_fw_version(self, status, payload):
         if status == serial_trigger_result.OK:
-            self.logger.info("[SHROOLY] FW Version: " + payload[0])
+            self.logger.debug("[SHROOLY] FW Version: " + payload[0])
             json_line = {}
             json_line['Boot-Firmware'] = {'version': payload[0],'build_date': payload[1]}
             self.status.update(json_line)
@@ -202,7 +236,7 @@ class shrooly:
 
     def callback_hw_version(self, status, payload):
         if status == serial_trigger_result.OK and len(payload) == 2:
-            self.logger.info("[SHROOLY] HW Version: " + payload[0] + " (" + payload[1] + ")")
+            self.logger.debug("[SHROOLY] HW Version: " + payload[0] + " (" + payload[1] + ")")
             
             json_line = {}
             json_line['Boot-Hardware'] = {'version': payload[1], 'hwcfg':payload[0]}
@@ -222,7 +256,8 @@ class shrooly:
             self.boot_successful = True
         else:
             self.logger.error("[SHROOLY] Error while looking for boot, got: " + str(payload))
-        # TBD: kivételkezelés a status-ra
+            if self.serialExceptionCallback is not None:
+                self.serialExceptionCallback()
 
     def list_files(self):
         self.logger.info("[SHROOLY] Requesting list of files..")
