@@ -29,27 +29,21 @@ class shrooly_file:
         return f"filename: \"{self.name}\", size: {self.size} byte(s), last_modified: {self.last_modified}"
 
 class shrooly:
-    status = {}
-    serialPort = ""
-    boot_successful = False
-    SerialConnected = False
-    Connected = False
-    communication_in_progress = False
-    file_list = []
-    terminal_handler_inst = None
-    version = CLI_VERSION
-
-    logger = logging_handler()
-    espResetCallback = None
-    serialExceptionCallback = None
-    stderrLineReceivedCallback = None
-
-    def __init__(self, serialPort = "", log_level=None, ext_logger=None, serial_log=None, serialExceptionCallback=None, espResetCallback=None, stderrLineReceivedCallback=None):
+    def __init__(self, serialPort = "", log_level=None, ext_logger=None, serial_log=None, serialExceptionCallback=None, espResetCallback=None, stderrLineReceivedCallback=None, prefix=""):
+        self.status = {}
+        self.logger = logging_handler()
+        self.logger.prefix = prefix
         self.logger.ext_log_pipe = ext_logger
         self.serialExceptionCallback = serialExceptionCallback
         self.espResetCallback = espResetCallback
         self.serialPort = serialPort
         self.stderrLineReceivedCallback = stderrLineReceivedCallback
+        self.boot_successful = False
+        self.SerialConnected = False
+        self.Connected = False
+        self.communication_in_progress = False
+        self.file_list = []
+        self.version = CLI_VERSION
         
         if log_level is not None:
             self.logger.setLevel(log_level)
@@ -57,7 +51,11 @@ class shrooly:
             self.logger.setLevel(ext_logger.getEffectiveLevel())
         
         self.serial_handler_instance = serial_handler(log_level, ext_logger, serial_log)
+        self.serial_handler_instance.logger.prefix = "[SHROOLY]"
         self.terminal_handler_inst = terminal_handler(self.serial_handler_instance)
+        
+    def __repr__(self):
+        return f"Shrooly(serialPort={self.serialPort}), SerialConnected={self.SerialConnected}, Connected={self.Connected})"
 
     def kill(self):
         self.logger.debug("[SHROOLY] Kill has been called, stopping all threads and subprocesses")

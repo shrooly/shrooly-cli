@@ -43,22 +43,21 @@ class serial_trigger:
         self.added_time = time.time()
 
 class serial_handler:
-    exit_signal = False        
-    serial_buffer = ""
-    serial_trigger_array = []
-    serial_line_buffer = ""
-    stderr_buffer = ""
-    status = serial_interface_status.DISCONNECTED
-    logger = logging_handler()
-    serial_log = None
-    serialExceptionCallback = None
-    stderrLineReceivedCallback = None
-    
-    master_fd = None
-    slave_fd = None
-    idf_monitor_process = None
-    
     def __init__(self, log_level=None,ext_logger=None, serial_log=None):
+        self.exit_signal = False
+        self.serial_buffer = ""
+        self.serial_trigger_array = []
+        self.serial_line_buffer = ""
+        self.stderr_buffer = ""
+        self.status = serial_interface_status.DISCONNECTED
+        self.logger = logging_handler()
+        self.serialExceptionCallback = None
+        self.stderrLineReceivedCallback = None
+        
+        self.master_fd = None
+        self.slave_fd = None
+        self.idf_monitor_process = None
+        
         self.logger.ext_log_pipe = ext_logger
         self.serial_log = serial_log
 

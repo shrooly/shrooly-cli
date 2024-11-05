@@ -1,5 +1,6 @@
 from .constants import PROMPT_REGEX
-from shrooly_cli.serial_handler import serial_trigger_response_type, serial_interface_status, serial_trigger_result
+from shrooly_cli.serial_handler import serial_handler, serial_trigger_response_type, serial_interface_status, serial_trigger_result
+import time
 
 class terminal_handler:
     """
@@ -17,12 +18,7 @@ class terminal_handler:
         send_command(self, strInput, name="", timeout=5): Sends a command to the terminal and waits for response.
     """
 
-    waiting_for_terminal_resp = False
-    terminal_resp_status = ""
-    terminal_resp_payload = ""
-    serial_handler_instance = None
-
-    def __init__(self, serial_handler):
+    def __init__(self, serial_handler:serial_handler):
         """
         Initializes the terminal handler with a serial handler instance.
 
@@ -30,6 +26,9 @@ class terminal_handler:
             serial_handler (object): An instance of the serial handler.
         """
         self.serial_handler_instance = serial_handler
+        self.waiting_for_terminal_resp = False
+        self.terminal_resp_status = ""
+        self.terminal_resp_payload = ""
 
     def terminal_command_callback(self, status, payload):
         """
@@ -55,9 +54,11 @@ class terminal_handler:
 
         if no_trigger is True:
             return serial_trigger_result.OK, ""
-        
+        starting_time = time.time()
         while True: 
             if self.waiting_for_terminal_resp is not True:
                 return self.terminal_resp_status, self.terminal_resp_payload
             if self.serial_handler_instance.status is not serial_interface_status.CONNECTED:
                 return serial_trigger_result.ERROR, ""
+            if time.time() > starting_time + timeout:
+                return serial_trigger_result.TIMEOUT, ""

@@ -6,8 +6,10 @@ class logging_level:
     CRITICAL = 50
 
 class logging_handler:
-    ext_log_pipe = None
-    log_level = logging_level.INFO
+    def __init__(self) -> None:
+        self.ext_log_pipe = None
+        self.log_level = logging_level.INFO
+        self.prefix = ""
 
     def setLevel(self, log_level):
         if self.ext_log_pipe is not None:
@@ -16,30 +18,30 @@ class logging_handler:
     
     def debug(self, message):
         if self.ext_log_pipe != None:
-            self.ext_log_pipe.debug(message)
+            self.ext_log_pipe.debug(self.prefix + message)
         elif self.log_level <=10:
-            print("[DEBUG]" + message)
+            print(self.prefix + "[DEBUG]" + message)
 
     def info(self, message):
         if self.ext_log_pipe != None:
-            self.ext_log_pipe.info(message)
+            self.ext_log_pipe.info(self.prefix + message)
         elif self.log_level <=20:
-            print("[INFO]" + message)
+            print(self.prefix + "[INFO]" + message)
 
     def warning(self, message):
         if self.ext_log_pipe != None:
-            self.ext_log_pipe.critical(message)
+            self.ext_log_pipe.critical(self.prefix + message)
         elif self.log_level <=30:
-            print("[WARNING]" + message)
+            print(self.prefix + "[WARNING]" + message)
 
     def error(self, message):
         if self.ext_log_pipe != None:
-            self.ext_log_pipe.critical(message)
+            self.ext_log_pipe.critical(self.prefix + message)
         elif self.log_level <=40:
-            print("[ERROR]" + message)
+            print(self.prefix + "[ERROR]" + message)
     
     def critical(self, message):
         if self.ext_log_pipe != None:
-            self.ext_log_pipe.critical(message)
+            self.ext_log_pipe.critical(self.prefix + message)
         elif self.log_level <=50:
-            print("[CRITICAL]" + message)
+            print(self.prefix + "[CRITICAL]" +  message)
