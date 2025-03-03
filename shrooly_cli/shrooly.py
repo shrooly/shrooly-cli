@@ -108,6 +108,7 @@ class shrooly:
         
         boot_started_time = time.time()
         
+        time.sleep(2)
         if wait_for_reset is True:
             self.logger.info("[SHROOLY] Waiting for boot to finish..")
             boot_tries = 0
@@ -318,7 +319,7 @@ class shrooly:
         file_name = Path(file_path).name
         self.logger.debug("[SHROOLY] File name from path: " + file_name)
         
-        if os.path.exists(file_path) is False:
+        if not os.path.exists(file_path):
             self.logger.error("[SHROOLY] Requested file doesn't exist on client device, exiting..")
             return command_success.ERROR
         
@@ -381,14 +382,14 @@ class shrooly:
                 response_split = resp_payload.split('\r\n')
                 # print(response_split)
                 # print(response_split[2])
-                transfer_status = response_split[2]
+                # transfer_status = response_split[2]
                 
-                if "status: ok" in response_split:
+                if any("status: ok" in line.lower() for line in response_split):
                     self.logger.debug("[SHROOLY] Transfer and CRC are OK, getting next chunk!")
                     chunk_counter += 1
                 else:
                     self.logger.error("[SHROOLY] Transfer was OK, but chunk wasn't accepted, retrying with same chunk.")
-                    retries+= 1
+                    retries += 1
             elif resp_status is serial_trigger_result.ERROR:
                 self.logger.error("[SHROOLY] Error during transmission, exiting.")
                 return command_success.ERROR
@@ -398,7 +399,7 @@ class shrooly:
             
             if retries > 5:
                 self.logger.error("[SHROOLY] Too many retries during sending of file. Exiting..")
-                break
+                return command_success.ERROR
 
             #time.sleep(10)
 
